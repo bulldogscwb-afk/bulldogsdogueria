@@ -1467,7 +1467,7 @@
 
   function marcaLabel(m){ return m==='todas' ? 'Todas as marcas' : m; }
 
-  var UNIDADES = ['g','kg','ml','l','un'];
+  var UNIDADES = ['g','kg','ml','l','un','pct','rl'];
   var __insumosCache = [];
 
   function ingredRowHtml(nome, quantidade, unidade, baseQuantidade){
@@ -1600,6 +1600,7 @@
           (canEdit ? '<button class="btn" data-remove-item="' + it.id + '" style="padding:4px 9px; font-size:11.5px;">Remover</button>' : '') +
         '</div></div>';
         if(it.rendimentoBaseValor){ html += '<div style="margin-top:6px; font-size:12.5px; font-weight:600; color:var(--brass);">Rendimento base da ficha: ' + escapeHtml(String(it.rendimentoBaseValor)) + ' ' + escapeHtml(it.rendimentoBaseUnidade||'') + '</div>'; }
+        if(it.custoReferencia){ html += '<div style="margin-top:2px; font-size:12px; color:var(--muted);">Custo de referência (importado): R$ ' + escapeHtml(String(it.custoReferencia).replace('.',',')) + '</div>'; }
         else if(it.rendimento){ html += '<div style="margin-top:6px; font-size:12.5px; font-weight:600; color:var(--brass);">Rendimento: ' + escapeHtml(it.rendimento) + '</div>'; }
         if(it.ingredientes && it.ingredientes.length){
           html += '<div style="margin-top:8px; font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.03em;">Ingredientes</div>';
@@ -2151,15 +2152,16 @@
     if(insumosCadastro.length===0){
       html += '<div class="empty">Nenhum insumo cadastrado ainda.</div>';
     } else {
-      html += '<table style="margin-top:10px;"><thead><tr><th>Nome</th><th>Unidade padrão</th><th></th></tr></thead><tbody>';
+      html += '<table style="margin-top:10px;"><thead><tr><th>Nome</th><th>Categoria</th><th>Unidade padrão</th><th></th></tr></thead><tbody>';
       insumosCadastro.forEach(function(i){
-        html += '<tr><td>' + escapeHtml(i.nome) + '</td><td class="num-cell">' + escapeHtml(i.unidadePadrao||'—') + '</td>' +
+        html += '<tr><td>' + escapeHtml(i.nome) + '</td><td style="color:var(--muted);">' + escapeHtml(i.categoria||'—') + '</td><td class="num-cell">' + escapeHtml(i.unidadePadrao||'—') + '</td>' +
           '<td><button class="btn" data-remove-insumo="' + i.id + '">Remover</button></td></tr>';
       });
       html += '</tbody></table>';
     }
     html += '<div class="add-row-bar">';
     html += '<input class="grid-input wide" type="text" id="insumo-nome" placeholder="Nome do insumo, ex: Tomate">';
+    html += '<input class="grid-input wide" type="text" id="insumo-categoria" placeholder="Categoria (opcional)">';
     html += '<select class="grid-select" id="insumo-unidade">' + UNIDADES.map(function(u){ return '<option value="' + u + '">' + u + '</option>'; }).join('') + '</select>';
     html += '<button class="btn primary" id="insumo-add">Cadastrar insumo</button>';
     html += '</div>';
@@ -2266,12 +2268,13 @@
 
     document.getElementById('insumo-add').onclick = async function(){
       var nome = document.getElementById('insumo-nome').value.trim();
+      var categoria = document.getElementById('insumo-categoria').value.trim();
       var unidadePadrao = document.getElementById('insumo-unidade').value;
       if(!nome){ showToast('Informe o nome do insumo.', 'error'); return; }
       var all = await getData('insumos-cadastro', []);
       var dup = all.some(function(i){ return i.ativo!==false && i.nome.toLowerCase()===nome.toLowerCase(); });
       if(dup){ showToast('Esse insumo já está cadastrado.', 'error'); return; }
-      all.push({id:'ins'+Date.now(), nome:nome, unidadePadrao:unidadePadrao, ativo:true});
+      all.push({id:'ins'+Date.now(), nome:nome, categoria:categoria, unidadePadrao:unidadePadrao, ativo:true});
       var saved = await setData('insumos-cadastro', all);
       if(saved){ logAudit('Ambas as unidades', 'Cadastrou insumo', nome + ' · ' + unidadePadrao); }
       renderConfig(main);
