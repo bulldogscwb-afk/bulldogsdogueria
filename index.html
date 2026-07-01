@@ -19,11 +19,11 @@
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
   :root{
-    --ink:#23201D; --ink-2:#3A352E;
-    --paper:#F7F4EE; --card:#FFFFFF;
-    --ember:#C1502E; --ember-dark:#8F3A20;
-    --brass:#8A6A2E; --brass-bg:#F3EBD8;
-    --line:#E4DED2; --muted:#7A7367;
+    --ink:#161514; --ink-2:#2B2A28;
+    --paper:#F5F5F4; --card:#FFFFFF;
+    --ember:#F5821F; --ember-dark:#D6690F;
+    --brass:#6E6E6E; --brass-bg:#EBEBEA;
+    --line:#E2E1DF; --muted:#6B6A68;
     --ok-bg:#E7EFE4; --ok-txt:#3A6B3F;
     --warn-bg:#FBEAE4; --warn-txt:#A6462A;
   }
@@ -182,6 +182,14 @@
 
   .sr-only{position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;}
 
+  .r3-row{display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center;}
+  .r3-box{width:120px; padding:13px 10px; text-align:center; border:1px solid var(--line); border-radius:8px; font-size:15px; font-family:'IBM Plex Mono',monospace; background:var(--card); color:var(--ink);}
+  .r3-box::placeholder{color:#C9C7C4; font-family:'Space Grotesk',sans-serif; font-weight:700;}
+  .r3-pill{background:var(--ink-2); color:#fff; font-size:11px; font-weight:700; padding:9px 16px; border-radius:20px; letter-spacing:.03em; white-space:nowrap;}
+  .r3-result{width:120px; padding:13px 10px; text-align:center; background:var(--ember); color:#fff; border-radius:8px; font-size:16px; font-weight:700; font-family:'IBM Plex Mono',monospace;}
+  .r3-assim{text-align:center; font-weight:700; color:var(--muted); margin:12px 0; font-size:11.5px; letter-spacing:.06em; text-transform:uppercase;}
+
+
   .toast{position:fixed; bottom:20px; right:20px; background:var(--ink); color:#fff; padding:12px 16px; border-radius:8px; font-size:13px; font-weight:500; box-shadow:0 6px 18px rgba(0,0,0,.2); opacity:0; transform:translateY(10px); transition:opacity .25s, transform .25s; z-index:9999; max-width:300px; line-height:1.4;}
   .toast.show{opacity:1; transform:translateY(0);}
   .toast.error{background:var(--ember-dark);}
@@ -205,13 +213,17 @@
   <div id="view-app">
     <div class="mobile-topbar">
       <button class="mobile-menu-btn" id="mobile-menu-btn" aria-label="Abrir menu"><i class="ti ti-menu-2" aria-hidden="true"></i></button>
+      <img src="logo-bulldogs.png" alt="" style="width:26px; height:26px; object-fit:contain;">
       <div class="brand" style="font-size:14px;">Central de gestão</div>
     </div>
     <div class="mobile-overlay" id="mobile-overlay"></div>
     <div class="shell">
       <div class="sidebar" id="sidebar">
-        <div class="brand">Central de gestão</div>
-        <div class="brand-sub">Painel multi-unidade</div>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <img src="logo-bulldogs.png" alt="" style="width:38px; height:38px; object-fit:contain; flex-shrink:0;">
+          <div><div class="brand">Central de gestão</div>
+          <div class="brand-sub">Painel multi-unidade</div></div>
+        </div>
         <div class="nav" id="nav-list"></div>
         <div class="side-user">
           <b id="side-user-nome">—</b>
@@ -436,7 +448,8 @@
 
   function renderBootstrap(card){
     card.innerHTML =
-      '<div class="login-ticket">' +
+      '<div class="login-ticket" style="text-align:center;">' +
+        '<img src="logo-bulldogs.png" alt="" style="width:76px; height:auto; margin-bottom:10px;">' +
         '<div class="login-eyebrow">Central de gestão · primeiro acesso</div>' +
         '<div class="login-title">Criar conta do Dono</div>' +
       '</div>' +
@@ -469,7 +482,8 @@
 
   function renderLoginForm(card){
     card.innerHTML =
-      '<div class="login-ticket">' +
+      '<div class="login-ticket" style="text-align:center;">' +
+        '<img src="logo-bulldogs.png" alt="" style="width:76px; height:auto; margin-bottom:10px;">' +
         '<div class="login-eyebrow">Central de gestão</div>' +
         '<div class="login-title">Entrar no painel</div>' +
       '</div>' +
@@ -1520,6 +1534,25 @@
   }
 
   async function renderConteudo(main){
+    var tab = window.__ctTab || 'fichas';
+    var html = pageHead('Receitas & Processos', 'Fichas técnicas, rotinas e rendimentos, por marca');
+    html += '<div class="unit-toggle" style="margin-bottom:20px; width:fit-content;">';
+    html += '<button data-ct-tab="fichas" class="' + (tab==='fichas'?'active':'') + '">Fichas técnicas</button>';
+    html += '<button data-ct-tab="rendimento" class="' + (tab==='rendimento'?'active':'') + '">Registrar rendimento</button>';
+    html += '</div>';
+    html += '<div id="ct-tab-content"></div>';
+    main.innerHTML = html;
+
+    main.querySelectorAll('[data-ct-tab]').forEach(function(b){
+      b.onclick = function(){ window.__ctTab = b.getAttribute('data-ct-tab'); renderConteudo(main); };
+    });
+
+    var content = document.getElementById('ct-tab-content');
+    if(tab==='rendimento'){ await renderRendimentoTab(content); }
+    else { await renderFichasTab(content); }
+  }
+
+  async function renderFichasTab(main){
     var canEdit = user.role==='dono';
     var items = await getConteudo();
     var filtroMarca = window.__ctMarca || 'todas';
@@ -1528,7 +1561,7 @@
     var editing = editingId ? items.find(function(x){ return x.id===editingId; }) : null;
     var showForm = !!editing || !!window.__ctShowForm;
 
-    var html = pageHead('Receitas & Processos', 'Fichas e rotinas, por marca' + (canEdit ? '' : ' · somente leitura'));
+    var html = '';
 
     html += '<div class="unit-toggle" style="margin-bottom:10px; width:fit-content; flex-wrap:wrap;">';
     html += '<button data-ct-marca="todas" class="' + (filtroMarca==='todas'?'active':'') + '">Todas as marcas</button>';
@@ -1587,48 +1620,10 @@
           (canEdit ? '<button class="btn" data-edit-item="' + it.id + '" style="padding:4px 9px; font-size:11.5px;">Editar</button>' : '') +
           (canEdit ? '<button class="btn" data-remove-item="' + it.id + '" style="padding:4px 9px; font-size:11.5px;">Remover</button>' : '') +
         '</div></div>';
-        if(it.rendimento){ html += '<div style="margin-top:8px; font-size:12.5px; font-weight:600; color:var(--brass);">Rendimento: ' + escapeHtml(it.rendimento) + '</div>'; }
+        if(it.rendimento){ html += '<div style="margin-top:8px; font-size:12.5px; font-weight:600; color:var(--ember);">Rendimento: ' + escapeHtml(it.rendimento) + '</div>'; }
         if(it.corpo){ html += '<div class="item-body" style="margin-top:8px;">' + escapeHtml(it.corpo) + '</div>'; }
         if(it.imagem){ html += '<img src="' + it.imagem + '" alt="" style="max-width:260px; border-radius:8px; margin-top:10px; display:block;">'; }
         if(it.anexoPdf){ html += '<button class="btn" data-open-pdf="' + it.id + '" style="margin-top:10px;"><i class="ti ti-file-type-pdf" aria-hidden="true"></i> Abrir PDF</button>'; }
-
-        if(it.tipo==='receita'){
-          var producoes = (it.producoes || []).slice().sort(function(a,b){ return b.data.localeCompare(a.data); });
-
-          html += '<div class="card" style="background:var(--paper); padding:14px; margin-top:14px;">';
-          html += '<div style="font-size:13px; font-weight:600; margin-bottom:4px;"><i class="ti ti-calculator" aria-hidden="true"></i> Regra de três — quantidade certa quando o rendimento não é redondo</div>';
-          html += '<div style="font-size:12px; color:var(--muted); margin-bottom:10px;">Preencha o rendimento e um ingrediente da ficha, depois o rendimento que você quer fazer — o sistema calcula a quantidade proporcional desse ingrediente. Ex: a ficha rende 6,8kg usando 5000g de tomate; se você quer fazer 4,3kg, ele mostra quanto tomate usar.</div>';
-          html += '<div class="form-grid" style="margin-top:0;">';
-          html += '<div class="form-field" style="margin:0;"><label>Rendimento da ficha</label><input class="grid-input" style="width:100%;" type="number" step="0.01" min="0" id="r3-base-' + it.id + '" placeholder="Ex: 6.8"></div>';
-          html += '<div class="form-field" style="margin:0;"><label>Qtd. de 1 ingrediente</label><input class="grid-input" style="width:100%;" type="number" step="0.01" min="0" id="r3-ing-' + it.id + '" placeholder="Ex: 5000"></div>';
-          html += '<div class="form-field" style="margin:0;"><label>Rendimento desejado</label><input class="grid-input" style="width:100%;" type="number" step="0.01" min="0" id="r3-desejado-' + it.id + '" placeholder="Ex: 4.3"></div>';
-          html += '</div>';
-          html += '<div style="margin-top:10px; font-size:14px; font-weight:700; color:var(--brass);" id="r3-resultado-' + it.id + '">Resultado: preencha os 3 campos acima</div>';
-          html += '</div>';
-
-          html += '<div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--line);">';
-          html += '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">';
-          html += '<div style="font-size:11.5px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.03em;">Rendimentos registrados (' + producoes.length + ')</div>';
-          html += '<button class="btn" data-prod-toggle="' + it.id + '" style="padding:4px 9px; font-size:11.5px;">' + (window.__ctProdOpenId===it.id ? 'Cancelar' : 'Registrar rendimento') + '</button>';
-          html += '</div>';
-
-          if(window.__ctProdOpenId===it.id){
-            html += '<div class="add-row-bar" style="flex-wrap:wrap;">';
-            html += '<div class="form-field" style="margin:0;"><label>Data</label><input type="date" id="prod-data-' + it.id + '" value="' + todayISO() + '"></div>';
-            html += '<input class="grid-input wide" style="width:180px;" type="text" id="prod-rendimento-' + it.id + '" placeholder="Ex: 4,6kg">';
-            html += '<button class="btn primary" data-prod-save="' + it.id + '">Salvar</button>';
-            html += '</div>';
-          }
-
-          if(producoes.length>0){
-            html += '<div class="table-scroll" style="margin-top:10px;"><table><thead><tr><th>Data</th><th>Rendimento obtido</th><th>Registrado por</th></tr></thead><tbody>';
-            producoes.slice(0,8).forEach(function(p){
-              html += '<tr><td class="num-cell">' + p.data + '</td><td class="num-cell" style="font-weight:600;">' + escapeHtml(p.rendimento||p.rendimentoObtido||'') + '</td><td>' + escapeHtml(p.responsavel) + '</td></tr>';
-            });
-            html += '</tbody></table></div>';
-          }
-          html += '</div>';
-        }
         html += '</div>';
       });
     }
@@ -1636,10 +1631,10 @@
     main.innerHTML = html;
 
     main.querySelectorAll('[data-ct-marca]').forEach(function(b){
-      b.onclick = function(){ window.__ctMarca = b.getAttribute('data-ct-marca'); renderConteudo(main); };
+      b.onclick = function(){ window.__ctMarca = b.getAttribute('data-ct-marca'); renderFichasTab(main); };
     });
     main.querySelectorAll('[data-ct-tipo]').forEach(function(b){
-      b.onclick = function(){ window.__ctTipo = b.getAttribute('data-ct-tipo'); renderConteudo(main); };
+      b.onclick = function(){ window.__ctTipo = b.getAttribute('data-ct-tipo'); renderFichasTab(main); };
     });
     main.querySelectorAll('[data-open-pdf]').forEach(function(b){
       b.onclick = function(){
@@ -1648,56 +1643,13 @@
       };
     });
 
-    items.forEach(function(it){
-      if(it.tipo!=='receita') return;
-      var baseEl = document.getElementById('r3-base-' + it.id);
-      var ingEl = document.getElementById('r3-ing-' + it.id);
-      var desejadoEl = document.getElementById('r3-desejado-' + it.id);
-      var resultEl = document.getElementById('r3-resultado-' + it.id);
-      if(!baseEl || !ingEl || !desejadoEl || !resultEl) return;
-      function calcular(){
-        var base = parseFloat(baseEl.value);
-        var ing = parseFloat(ingEl.value);
-        var desejado = parseFloat(desejadoEl.value);
-        if(!base || !ing || !desejado){ resultEl.textContent = 'Resultado: preencha os 3 campos acima'; return; }
-        var resultado = (ing * desejado) / base;
-        resultEl.textContent = 'Resultado: use ' + (Math.round(resultado*100)/100) + ' (na mesma unidade do ingrediente que você informou)';
-      }
-      [baseEl, ingEl, desejadoEl].forEach(function(el){ el.addEventListener('input', calcular); });
-    });
-
-    main.querySelectorAll('[data-prod-toggle]').forEach(function(b){
-      b.onclick = function(){
-        var id = b.getAttribute('data-prod-toggle');
-        window.__ctProdOpenId = (window.__ctProdOpenId===id) ? null : id;
-        renderConteudo(main);
-      };
-    });
-    main.querySelectorAll('[data-prod-save]').forEach(function(b){
-      b.onclick = async function(){
-        var id = b.getAttribute('data-prod-save');
-        var data = document.getElementById('prod-data-' + id).value || todayISO();
-        var rendimento = document.getElementById('prod-rendimento-' + id).value.trim();
-        if(!rendimento){ showToast('Informe o rendimento obtido.', 'error'); return; }
-        var all = await getConteudo();
-        var idx = all.findIndex(function(x){ return x.id===id; });
-        if(idx===-1) return;
-        all[idx].producoes = all[idx].producoes || [];
-        all[idx].producoes.push({id:'p'+Date.now(), data:data, rendimento:rendimento, responsavel:user.nome || labelRole(user.role)});
-        var saved = await setData('conteudo', all);
-        if(saved){ logAudit(all[idx].marca==='todas' ? 'Ambas as unidades' : all[idx].marca, 'Registrou rendimento', all[idx].titulo + ' · ' + rendimento); }
-        window.__ctProdOpenId = null;
-        renderConteudo(main);
-      };
-    });
-
     if(canEdit){
       var showFormBtn = document.getElementById('ct-show-form');
-      if(showFormBtn){ showFormBtn.onclick = function(){ window.__ctShowForm = true; renderConteudo(main); }; }
+      if(showFormBtn){ showFormBtn.onclick = function(){ window.__ctShowForm = true; renderFichasTab(main); }; }
 
       var cancelBtn = document.getElementById('item-cancel');
       if(cancelBtn){
-        cancelBtn.onclick = function(){ window.__ctEditingId = null; window.__ctShowForm = false; renderConteudo(main); };
+        cancelBtn.onclick = function(){ window.__ctEditingId = null; window.__ctShowForm = false; renderFichasTab(main); };
       }
 
       if(showForm){
@@ -1748,12 +1700,12 @@
           }
           window.__ctEditingId = null;
           window.__ctShowForm = false;
-          renderConteudo(main);
+          renderFichasTab(main);
         };
       }
 
       main.querySelectorAll('[data-edit-item]').forEach(function(btn){
-        btn.onclick = function(){ window.__ctEditingId = btn.getAttribute('data-edit-item'); window.__ctShowForm = true; renderConteudo(main); };
+        btn.onclick = function(){ window.__ctEditingId = btn.getAttribute('data-edit-item'); window.__ctShowForm = true; renderFichasTab(main); };
       });
 
       main.querySelectorAll('[data-remove-item]').forEach(function(btn){
@@ -1765,11 +1717,131 @@
           all = all.filter(function(x){ return x.id!==id; });
           var saved = await setData('conteudo', all);
           if(saved && target){ logAudit(target.marca==='todas' ? 'Ambas as unidades' : target.marca, 'Removeu item', target.titulo); }
-          renderConteudo(main);
+          renderFichasTab(main);
         };
       });
     }
   }
+
+  function rendIngredRowHtml(nome, quantidade){
+    return '<div class="rend-ing-row" style="display:flex; gap:6px; margin-bottom:6px; flex-wrap:wrap;">' +
+      '<input class="grid-input" style="width:90px;" type="text" data-rend-field="quantidade" placeholder="Qtd" value="' + escapeHtml(quantidade||'') + '">' +
+      '<input class="grid-input wide" style="flex:1; min-width:140px;" type="text" data-rend-field="nome" placeholder="Nome do ingrediente" value="' + escapeHtml(nome||'') + '">' +
+      '<button type="button" class="btn rend-ing-remove" style="padding:6px 9px;">×</button>' +
+    '</div>';
+  }
+
+  async function renderRendimentoTab(main){
+    var items = await getConteudo();
+    var receitas = items.filter(function(it){ return it.tipo==='receita'; });
+
+    var html = '<div class="card" style="margin-bottom:20px; padding:22px;">';
+    html += '<div style="font-size:14px; font-weight:600; margin-bottom:4px;">Regra de três</div>';
+    html += '<div style="font-size:12px; color:var(--muted); margin-bottom:18px;">Preencha os três valores conhecidos pra descobrir o quarto — útil quando o rendimento não é redondo.</div>';
+    html += '<div class="r3-row">';
+    html += '<input class="r3-box" type="number" step="0.01" id="r3-a" placeholder="A">';
+    html += '<span class="r3-pill">ESTÁ PARA</span>';
+    html += '<input class="r3-box" type="number" step="0.01" id="r3-b" placeholder="B">';
+    html += '</div>';
+    html += '<div class="r3-assim">Assim como</div>';
+    html += '<div class="r3-row">';
+    html += '<input class="r3-box" type="number" step="0.01" id="r3-c" placeholder="C">';
+    html += '<span class="r3-pill">ESTÁ PARA</span>';
+    html += '<div class="r3-result" id="r3-x">X</div>';
+    html += '</div>';
+    html += '</div>';
+
+    html += '<div class="card" style="margin-bottom:20px;">';
+    html += '<div style="font-size:14px; font-weight:600; margin-bottom:14px;">Registrar rendimento de uma produção</div>';
+    html += '<div class="form-field"><label>Qual item você fez?</label><select id="rend-item">';
+    html += '<option value="">Selecionar receita…</option>';
+    receitas.forEach(function(r){ html += '<option value="' + r.id + '">' + escapeHtml(r.titulo) + '</option>'; });
+    html += '</select></div>';
+
+    html += '<div style="margin-top:14px;"><label style="display:block; font-size:11.5px; color:var(--muted); font-weight:600; margin-bottom:6px;">Quanto foi de cada ingrediente</label>';
+    html += '<div id="rend-ing-rows">' + rendIngredRowHtml() + '</div>';
+    html += '<button type="button" class="btn" id="rend-ing-add" style="margin-top:4px;">+ Adicionar ingrediente</button>';
+    html += '</div>';
+
+    html += '<div class="form-grid" style="grid-template-columns:1fr 1fr; margin-top:16px;">';
+    html += '<div class="form-field" style="margin:0;"><label>Data</label><input type="date" id="rend-data" value="' + todayISO() + '"></div>';
+    html += formField('text','rend-total','Rendimento total obtido','Ex: 4,6kg');
+    html += '</div>';
+    html += '<div style="margin-top:16px;"><button class="btn primary" id="rend-save">Salvar rendimento</button></div>';
+    html += '</div>';
+
+    var todosRegistros = [];
+    receitas.forEach(function(r){
+      (r.producoes||[]).forEach(function(p){ todosRegistros.push({item:r.titulo, p:p}); });
+    });
+    todosRegistros.sort(function(a,b){ return b.p.data.localeCompare(a.p.data); });
+
+    html += '<div class="card">';
+    html += '<div style="font-size:14px; font-weight:600; margin-bottom:10px;">Histórico de rendimentos</div>';
+    if(todosRegistros.length===0){
+      html += '<div class="empty">Nenhum rendimento registrado ainda.</div>';
+    } else {
+      html += '<div class="table-scroll"><table><thead><tr><th>Data</th><th>Item</th><th>Ingredientes usados</th><th>Rendimento total</th><th>Registrado por</th></tr></thead><tbody>';
+      todosRegistros.slice(0,30).forEach(function(r){
+        var listaIng = (r.p.ingredientes||[]).map(function(ing){ return (ing.quantidade||'') + ' ' + ing.nome; }).join(', ');
+        html += '<tr><td class="num-cell">' + r.p.data + '</td><td>' + escapeHtml(r.item) + '</td><td style="color:var(--muted);">' + escapeHtml(listaIng||'—') + '</td>' +
+          '<td class="num-cell" style="font-weight:600;">' + escapeHtml(r.p.rendimentoTotal||'') + '</td><td>' + escapeHtml(r.p.responsavel) + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    html += '</div>';
+
+    main.innerHTML = html;
+
+    function calcularR3(){
+      var a = parseFloat(document.getElementById('r3-a').value);
+      var b = parseFloat(document.getElementById('r3-b').value);
+      var c = parseFloat(document.getElementById('r3-c').value);
+      var xEl = document.getElementById('r3-x');
+      if(!a || !b || !c){ xEl.textContent = 'X'; return; }
+      var x = (b*c)/a;
+      xEl.textContent = Math.round(x*100)/100;
+    }
+    ['r3-a','r3-b','r3-c'].forEach(function(id){
+      document.getElementById(id).addEventListener('input', calcularR3);
+    });
+
+    var rowsContainer = document.getElementById('rend-ing-rows');
+    rowsContainer.addEventListener('click', function(ev){
+      if(ev.target.classList.contains('rend-ing-remove')){
+        var row = ev.target.closest('.rend-ing-row');
+        if(row && rowsContainer.querySelectorAll('.rend-ing-row').length>1) row.remove();
+      }
+    });
+    document.getElementById('rend-ing-add').onclick = function(){
+      var div = document.createElement('div');
+      div.innerHTML = rendIngredRowHtml();
+      rowsContainer.appendChild(div.firstElementChild);
+    };
+
+    document.getElementById('rend-save').onclick = async function(){
+      var itemId = document.getElementById('rend-item').value;
+      if(!itemId){ showToast('Selecione o item que você fez.', 'error'); return; }
+      var total = document.getElementById('rend-total').value.trim();
+      if(!total){ showToast('Informe o rendimento total obtido.', 'error'); return; }
+      var data = document.getElementById('rend-data').value || todayISO();
+      var ingredientes = [];
+      rowsContainer.querySelectorAll('.rend-ing-row').forEach(function(row){
+        var nome = row.querySelector('[data-rend-field="nome"]').value.trim();
+        var quantidade = row.querySelector('[data-rend-field="quantidade"]').value.trim();
+        if(nome){ ingredientes.push({nome:nome, quantidade:quantidade}); }
+      });
+      var all = await getConteudo();
+      var idx = all.findIndex(function(x){ return x.id===itemId; });
+      if(idx===-1) return;
+      all[idx].producoes = all[idx].producoes || [];
+      all[idx].producoes.push({id:'p'+Date.now(), data:data, ingredientes:ingredientes, rendimentoTotal:total, responsavel:user.nome || labelRole(user.role)});
+      var saved = await setData('conteudo', all);
+      if(saved){ logAudit(all[idx].marca==='todas' ? 'Ambas as unidades' : all[idx].marca, 'Registrou rendimento', all[idx].titulo + ' · ' + total); }
+      renderRendimentoTab(main);
+    };
+  }
+
 
   // ============ CHECKLISTS ============
   async function renderChecklists(main){
