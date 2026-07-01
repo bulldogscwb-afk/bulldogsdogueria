@@ -1468,19 +1468,24 @@
   function marcaLabel(m){ return m==='todas' ? 'Todas as marcas' : m; }
 
   var UNIDADES = ['g','kg','ml','l','un'];
+  var __insumosCache = [];
 
-  function ingredRowHtml(nome, quantidade, unidade){
-    return '<div class="ingred-row" style="display:flex; gap:6px; margin-bottom:6px; align-items:center;">' +
+  function ingredRowHtml(nome, quantidade, unidade, baseQuantidade){
+    var baseAttr = (baseQuantidade!=null && baseQuantidade!=='') ? ' data-base-qty="' + escapeHtml(String(baseQuantidade)) + '"' : '';
+    var options = '<option value="">Selecionar insumo…</option>' + __insumosCache.map(function(i){
+      return '<option value="' + escapeHtml(i.nome) + '" data-unidade="' + escapeHtml(i.unidadePadrao||'') + '"' + (i.nome===nome?' selected':'') + '>' + escapeHtml(i.nome) + '</option>';
+    }).join('');
+    return '<div class="ingred-row"' + baseAttr + ' style="display:flex; gap:6px; margin-bottom:6px; align-items:center; flex-wrap:wrap;">' +
       '<input class="grid-input" style="width:70px;" type="number" step="0.01" min="0" data-ing-field="quantidade" value="' + (quantidade!=null && quantidade!==''? escapeHtml(String(quantidade)) : '') + '" placeholder="Qtd">' +
       '<select class="grid-select" style="width:70px;" data-ing-field="unidade">' + UNIDADES.map(function(u){ return '<option value="' + u + '"' + (u===unidade?' selected':'') + '>' + u + '</option>'; }).join('') + '</select>' +
-      '<input class="grid-input wide" style="flex:1; min-width:120px;" type="text" data-ing-field="nome" value="' + escapeHtml(nome||'') + '" placeholder="Nome do ingrediente">' +
+      '<select class="grid-select" style="flex:1; min-width:160px;" data-ing-field="nome">' + options + '</select>' +
       '<button type="button" class="btn ingred-remove-btn" style="padding:6px 9px;">×</button>' +
     '</div>';
   }
 
-  function addIngredRow(container, nome, quantidade, unidade){
+  function addIngredRow(container, nome, quantidade, unidade, baseQuantidade){
     var div = document.createElement('div');
-    div.innerHTML = ingredRowHtml(nome, quantidade, unidade);
+    div.innerHTML = ingredRowHtml(nome, quantidade, unidade, baseQuantidade);
     container.appendChild(div.firstElementChild);
   }
 
@@ -1489,6 +1494,17 @@
       if(ev.target.classList.contains('ingred-remove-btn')){
         var row = ev.target.closest('.ingred-row');
         if(row) row.remove();
+      }
+    });
+    container.addEventListener('change', function(ev){
+      if(ev.target.matches('[data-ing-field="nome"]')){
+        var opt = ev.target.options[ev.target.selectedIndex];
+        var unidadePadrao = opt ? opt.getAttribute('data-unidade') : '';
+        if(unidadePadrao){
+          var row = ev.target.closest('.ingred-row');
+          var unidadeSelect = row.querySelector('[data-ing-field="unidade"]');
+          if(unidadeSelect && UNIDADES.indexOf(unidadePadrao)!==-1) unidadeSelect.value = unidadePadrao;
+        }
       }
     });
   }
@@ -1509,6 +1525,7 @@
   async function renderConteudo(main){
     var canEdit = user.role==='dono';
     var items = await getConteudo();
+    __insumosCache = (await getData('insumos-cadastro', [])).filter(function(i){ return i.ativo!==false; });
     var filtroMarca = window.__ctMarca || 'todas';
     var filtroTipo = window.__ctTipo || 'todos';
     var editingId = window.__ctEditingId || null;
@@ -1549,7 +1566,8 @@
       html += '</div>';
 
       html += '<div class="form-field" style="margin-top:12px;"><label for="item-body">Modo de preparo / observações</label><textarea id="item-body" rows="4" style="width:100%; padding:9px; border:1px solid var(--line); border-radius:7px; background:var(--paper);">' + (editing ? escapeHtml(editing.corpo) : '') + '</textarea></div>';
-      html += formField('text','item-rendimento','Rendimento teórico (opcional)','Ex: 6,8kg ou 40 porções', editing ? editing.rendimento : null);
+      html += formField('number','item-rendimento-valor','Rendimento base (número)','Ex: 6.8', editing ? editing.rendimentoBaseValor : null);
+      html += formField('text','item-rendimento-unidade','Unidade do rendimento','Ex: kg, porções', editing ? editing.rendimentoBaseUnidade : null);
       html += '<div class="form-field"><label for="item-image">Imagem ou PDF (opcional)</label><input type="file" id="item-image" accept="image/*,application/pdf"><div id="item-image-preview" style="margin-top:8px;">' +
         (editing && editing.imagem ? '<img src="' + editing.imagem + '" style="max-width:160px; border-radius:8px;">' : '') +
         (editing && editing.anexoPdf ? '<span style="font-size:12.5px; color:var(--muted);">PDF já anexado — escolha outro arquivo pra substituir.</span>' : '') +
@@ -1581,7 +1599,8 @@
           (canEdit ? '<button class="btn" data-edit-item="' + it.id + '" style="padding:4px 9px; font-size:11.5px;">Editar</button>' : '') +
           (canEdit ? '<button class="btn" data-remove-item="' + it.id + '" style="padding:4px 9px; font-size:11.5px;">Remover</button>' : '') +
         '</div></div>';
-        if(it.rendimento){ html += '<div style="margin-top:6px; font-size:12.5px; font-weight:600; color:var(--brass);">Rendimento teórico: ' + escapeHtml(it.rendimento) + '</div>'; }
+        if(it.rendimentoBaseValor){ html += '<div style="margin-top:6px; font-size:12.5px; font-weight:600; color:var(--brass);">Rendimento base da ficha: ' + escapeHtml(String(it.rendimentoBaseValor)) + ' ' + escapeHtml(it.rendimentoBaseUnidade||'') + '</div>'; }
+        else if(it.rendimento){ html += '<div style="margin-top:6px; font-size:12.5px; font-weight:600; color:var(--brass);">Rendimento: ' + escapeHtml(it.rendimento) + '</div>'; }
         if(it.ingredientes && it.ingredientes.length){
           html += '<div style="margin-top:8px; font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.03em;">Ingredientes</div>';
           html += '<ul style="margin:4px 0 0 18px; padding:0; font-size:13px; color:var(--ink-2);">';
@@ -1604,10 +1623,21 @@
 
           if(window.__ctProdOpenId===it.id){
             html += '<div style="margin-top:10px;">';
+
+            if(it.rendimentoBaseValor){
+              html += '<div class="card" style="background:var(--paper); padding:14px; margin-bottom:12px;">';
+              html += '<div style="font-size:12.5px; color:var(--muted); margin-bottom:8px;">Ficha rende <b>' + escapeHtml(String(it.rendimentoBaseValor)) + ' ' + escapeHtml(it.rendimentoBaseUnidade||'') + '</b>. Quanto você quer produzir agora? O sistema calcula a quantidade de cada ingrediente pela regra de três.</div>';
+              html += '<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">';
+              html += '<input class="grid-input" style="width:100px;" type="number" step="0.01" min="0" id="prod-rendimento-desejado" placeholder="Ex: 10">';
+              html += '<span style="font-size:13px; color:var(--muted);">' + escapeHtml(it.rendimentoBaseUnidade||'') + '</span>';
+              html += '<button type="button" class="btn primary" id="prod-calcular" data-base-valor="' + it.rendimentoBaseValor + '">Calcular proporção</button>';
+              html += '</div></div>';
+            }
+
             html += '<label style="display:block; font-size:11.5px; color:var(--muted); font-weight:600; margin-bottom:5px;">Peso/quantidade de cada ingrediente usado nesta produção</label>';
             html += '<div id="prod-ingred-rows">';
             var baseIngreds = (it.ingredientes && it.ingredientes.length) ? it.ingredientes : [{}];
-            baseIngreds.forEach(function(ing){ html += ingredRowHtml(ing.nome, ing.quantidade, ing.unidade); });
+            baseIngreds.forEach(function(ing){ html += ingredRowHtml(ing.nome, ing.quantidade, ing.unidade, ing.quantidade); });
             html += '</div>';
             html += '<button type="button" class="btn" id="prod-ingred-add" style="margin-top:4px;">+ Adicionar ingrediente</button>';
             html += '<div class="add-row-bar" style="flex-wrap:wrap; margin-top:12px;">';
@@ -1660,6 +1690,23 @@
     if(prodRowsContainer){
       wireIngredContainer(prodRowsContainer);
       document.getElementById('prod-ingred-add').onclick = function(){ addIngredRow(prodRowsContainer); };
+      var calcBtn = document.getElementById('prod-calcular');
+      if(calcBtn){
+        calcBtn.onclick = function(){
+          var baseValor = parseFloat(calcBtn.getAttribute('data-base-valor'));
+          var desejado = parseFloat(document.getElementById('prod-rendimento-desejado').value);
+          if(!desejado || desejado<=0){ showToast('Informe quanto você quer produzir.', 'error'); return; }
+          var fator = desejado / baseValor;
+          prodRowsContainer.querySelectorAll('.ingred-row').forEach(function(row){
+            var baseQty = row.getAttribute('data-base-qty');
+            if(baseQty!==null && baseQty!==''){
+              var novaQtd = parseFloat(baseQty) * fator;
+              row.querySelector('[data-ing-field="quantidade"]').value = Math.round(novaQtd*100)/100;
+            }
+          });
+          showToast('Quantidades recalculadas pela proporção.');
+        };
+      }
       document.getElementById('prod-save').onclick = async function(){
         var itemId = this.getAttribute('data-item-id');
         var data = document.getElementById('prod-data').value || todayISO();
@@ -1720,18 +1767,19 @@
         var b = document.getElementById('item-body').value.trim();
         var tipo = document.getElementById('item-tipo').value;
         var marca = document.getElementById('item-marca').value;
-        var rendimento = document.getElementById('item-rendimento').value.trim();
+        var rendimentoBaseValor = parseFloat(document.getElementById('item-rendimento-valor').value) || null;
+        var rendimentoBaseUnidade = document.getElementById('item-rendimento-unidade').value.trim();
         var ingredientes = (tipo==='receita') ? readIngredRows(ingredRowsContainer) : [];
         if(!t){ showToast('Dê um título ao item.', 'error'); return; }
         var all = await getConteudo();
         if(editing){
           var idx = all.findIndex(function(x){ return x.id===editing.id; });
-          if(idx>-1){ all[idx] = {id:editing.id, tipo:tipo, titulo:t, corpo:b, rendimento:rendimento, ingredientes:ingredientes, marca:marca, imagem:pendingImage, anexoPdf:pendingPdf, producoes:editing.producoes||[]}; }
+          if(idx>-1){ all[idx] = {id:editing.id, tipo:tipo, titulo:t, corpo:b, rendimentoBaseValor:rendimentoBaseValor, rendimentoBaseUnidade:rendimentoBaseUnidade, ingredientes:ingredientes, marca:marca, imagem:pendingImage, anexoPdf:pendingPdf, producoes:editing.producoes||[]}; }
           var saved1 = await setData('conteudo', all);
           if(saved1){ logAudit(marca==='todas' ? 'Ambas as unidades' : marca, 'Editou ' + (tipo==='receita'?'receita':'processo'), t); }
           window.__ctEditingId = null;
         } else {
-          all.push({id:'i'+Date.now(), tipo:tipo, titulo:t, corpo:b, rendimento:rendimento, ingredientes:ingredientes, marca:marca, imagem:pendingImage, anexoPdf:pendingPdf, producoes:[]});
+          all.push({id:'i'+Date.now(), tipo:tipo, titulo:t, corpo:b, rendimentoBaseValor:rendimentoBaseValor, rendimentoBaseUnidade:rendimentoBaseUnidade, ingredientes:ingredientes, marca:marca, imagem:pendingImage, anexoPdf:pendingPdf, producoes:[]});
           var saved2 = await setData('conteudo', all);
           if(saved2){ logAudit(marca==='todas' ? 'Ambas as unidades' : marca, 'Adicionou ' + (tipo==='receita'?'receita':'processo'), t); }
         }
@@ -2027,7 +2075,8 @@
     html += '<div class="grid-2">';
 
     var ratesByUnit = await Promise.all(UNITS.map(function(u){ return getData('rates-' + u.id, DEFAULT_RATES); }));
-    var cfgLoaded = await Promise.all([getData('motoboy-cadastro', []), getData('colaboradores-avaliacao', [])]);
+    var cfgLoaded = await Promise.all([getData('motoboy-cadastro', []), getData('colaboradores-avaliacao', []), getData('insumos-cadastro', [])]);
+    var insumosCadastro = cfgLoaded[2].filter(function(i){ return i.ativo!==false; });
     var motoboyCadastro = cfgLoaded[0].filter(function(m){ return m.ativo!==false; });
     var colabAvaliacao = cfgLoaded[1].filter(function(c){ return c.ativo!==false; });
 
@@ -2092,6 +2141,27 @@
     html += '<input class="grid-input wide" type="text" id="colab-cad-nome" placeholder="Nome do colaborador">';
     html += '<select class="grid-select" id="colab-cad-unit">' + UNITS.map(function(u2){ return '<option value="' + u2.id + '">' + u2.label + '</option>'; }).join('') + '</select>';
     html += '<button class="btn primary" id="colab-cad-add">Cadastrar colaborador</button>';
+    html += '</div>';
+    html += '</div>';
+
+    html += '<div style="height:16px"></div>';
+    html += '<div class="card">';
+    html += '<div style="font-weight:600; font-size:14px;">Cadastro de insumos</div>';
+    html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Lista única de ingredientes/insumos. É essa lista que aparece na hora de montar uma receita ou registrar uma produção — assim todo mundo usa o mesmo nome, sem digitar errado.</div>';
+    if(insumosCadastro.length===0){
+      html += '<div class="empty">Nenhum insumo cadastrado ainda.</div>';
+    } else {
+      html += '<table style="margin-top:10px;"><thead><tr><th>Nome</th><th>Unidade padrão</th><th></th></tr></thead><tbody>';
+      insumosCadastro.forEach(function(i){
+        html += '<tr><td>' + escapeHtml(i.nome) + '</td><td class="num-cell">' + escapeHtml(i.unidadePadrao||'—') + '</td>' +
+          '<td><button class="btn" data-remove-insumo="' + i.id + '">Remover</button></td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '<div class="add-row-bar">';
+    html += '<input class="grid-input wide" type="text" id="insumo-nome" placeholder="Nome do insumo, ex: Tomate">';
+    html += '<select class="grid-select" id="insumo-unidade">' + UNIDADES.map(function(u){ return '<option value="' + u + '">' + u + '</option>'; }).join('') + '</select>';
+    html += '<button class="btn primary" id="insumo-add">Cadastrar insumo</button>';
     html += '</div>';
     html += '</div>';
 
@@ -2178,6 +2248,35 @@
       renderConfig(main);
     };
 
+    main.querySelectorAll('[data-remove-insumo]').forEach(function(btn){
+      btn.onclick = async function(){
+        if(!(await showConfirm('Remover este insumo do cadastro? Receitas que já usam esse nome continuam com o texto salvo.', 'Remover'))) return;
+        var id = btn.getAttribute('data-remove-insumo');
+        var all = await getData('insumos-cadastro', []);
+        var idx = all.findIndex(function(i){ return i.id===id; });
+        if(idx>-1){
+          var nome = all[idx].nome;
+          all[idx].ativo = false;
+          var saved = await setData('insumos-cadastro', all);
+          if(saved){ logAudit('Ambas as unidades', 'Removeu insumo do cadastro', nome); }
+        }
+        renderConfig(main);
+      };
+    });
+
+    document.getElementById('insumo-add').onclick = async function(){
+      var nome = document.getElementById('insumo-nome').value.trim();
+      var unidadePadrao = document.getElementById('insumo-unidade').value;
+      if(!nome){ showToast('Informe o nome do insumo.', 'error'); return; }
+      var all = await getData('insumos-cadastro', []);
+      var dup = all.some(function(i){ return i.ativo!==false && i.nome.toLowerCase()===nome.toLowerCase(); });
+      if(dup){ showToast('Esse insumo já está cadastrado.', 'error'); return; }
+      all.push({id:'ins'+Date.now(), nome:nome, unidadePadrao:unidadePadrao, ativo:true});
+      var saved = await setData('insumos-cadastro', all);
+      if(saved){ logAudit('Ambas as unidades', 'Cadastrou insumo', nome + ' · ' + unidadePadrao); }
+      renderConfig(main);
+    };
+
     document.getElementById('nav-perm-save').onclick = async function(){
       var newPerms = {};
       NAV.filter(function(n){ return n.id!=='config'; }).forEach(function(n){
@@ -2199,7 +2298,7 @@
 
     var BACKUP_KEYS = ['motoboys-entries','rates-unidade1','rates-unidade2','motoboy-schedule','motoboy-cadastro',
       'motoboys-turno-status','caixa-fechamento','caixa-fechamento-status','conteudo','nav-permissions','avaliacoes',
-      'colaboradores-avaliacao','checklist-status','audit-log','users-list'];
+      'colaboradores-avaliacao','insumos-cadastro','checklist-status','audit-log','users-list'];
 
     document.getElementById('backup-export').onclick = async function(){
       var values = await Promise.all(BACKUP_KEYS.map(function(k){ return getData(k, null); }));
