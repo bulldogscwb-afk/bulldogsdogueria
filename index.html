@@ -260,7 +260,7 @@
     {id:'motoboys', label:'Motoboys', icon:'ti-motorbike', roles:['dono','gerente','supervisor','caixa']},
     {id:'fechamento', label:'Fechamento de caixa', icon:'ti-cash', roles:['dono','gerente','caixa']},
     {id:'documentos', label:'Documentos', icon:'ti-folder', roles:['dono','gerente']},
-    {id:'conteudo', label:'Receitas & Processos', icon:'ti-book-2', roles:['dono','gerente','supervisor']},
+    {id:'conteudo', label:'Receitas & Processos', icon:'ti-book-2', roles:['dono','gerente','supervisor','equipe','caixa']},
     {id:'checklists', label:'Checklists', icon:'ti-checkbox', roles:['dono','gerente','supervisor','equipe']},
     {id:'avaliacoes', label:'Avaliações', icon:'ti-star', roles:['dono','gerente','supervisor']},
     {id:'auditoria', label:'Auditoria', icon:'ti-history', roles:['dono','gerente']},
@@ -1512,7 +1512,7 @@
     }
 
     var filtered = items.filter(function(it){
-      var okMarca = filtroMarca==='todas' || it.marca===filtroMarca;
+      var okMarca = filtroMarca==='todas' || it.marca===filtroMarca || it.marca==='todas';
       var okTipo = filtroTipo==='todos' || it.tipo===filtroTipo;
       return okMarca && okTipo;
     });
@@ -1534,7 +1534,33 @@
         if(it.imagem){ html += '<img src="' + it.imagem + '" alt="" style="max-width:260px; border-radius:8px; margin-top:8px; display:block;">'; }
         if(it.anexoPdf){ html += '<button class="btn" data-open-pdf="' + it.id + '" style="margin-top:8px;"><i class="ti ti-file-type-pdf" aria-hidden="true"></i> Abrir PDF</button>'; }
         html += '<div class="item-body">' + escapeHtml(it.corpo) + '</div>';
-        if(it.rendimento){ html += '<div style="margin-top:6px; font-size:12.5px; font-weight:600; color:var(--brass);">Rendimento: ' + escapeHtml(it.rendimento) + '</div>'; }
+        if(it.rendimento){ html += '<div style="margin-top:6px; font-size:12.5px; font-weight:600; color:var(--brass);">Rendimento teórico: ' + escapeHtml(it.rendimento) + '</div>'; }
+
+        if(it.tipo==='receita'){
+          var producoes = (it.producoes || []).slice().sort(function(a,b){ return b.data.localeCompare(a.data); });
+          html += '<div style="margin-top:12px; padding-top:10px; border-top:1px dashed var(--line);">';
+          html += '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">';
+          html += '<div style="font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.03em;">Produções registradas (' + producoes.length + ')</div>';
+          html += '<button class="btn" data-prod-toggle="' + it.id + '" style="padding:4px 9px; font-size:11.5px;">' + (window.__ctProdOpenId===it.id ? 'Cancelar' : 'Registrar produção') + '</button>';
+          html += '</div>';
+
+          if(window.__ctProdOpenId===it.id){
+            html += '<div class="add-row-bar" style="flex-wrap:wrap;">';
+            html += '<div class="form-field" style="margin:0;"><label>Data</label><input type="date" id="prod-data-' + it.id + '" value="' + todayISO() + '"></div>';
+            html += '<input class="grid-input wide" style="width:160px;" type="text" id="prod-rendimento-' + it.id + '" placeholder="Ex: 4,6kg">';
+            html += '<button class="btn primary" data-prod-save="' + it.id + '">Salvar</button>';
+            html += '</div>';
+          }
+
+          if(producoes.length>0){
+            html += '<table style="margin-top:8px;"><thead><tr><th>Data</th><th>Rendimento obtido</th><th>Registrado por</th></tr></thead><tbody>';
+            producoes.slice(0,5).forEach(function(p){
+              html += '<tr><td class="num-cell">' + p.data + '</td><td class="num-cell">' + escapeHtml(p.rendimento) + '</td><td>' + escapeHtml(p.responsavel) + '</td></tr>';
+            });
+            html += '</tbody></table>';
+          }
+          html += '</div>';
+        }
         html += '</div>';
       });
     }
@@ -1552,6 +1578,31 @@
       b.onclick = function(){
         var it = items.find(function(x){ return x.id===b.getAttribute('data-open-pdf'); });
         if(it && it.anexoPdf) openDataUrlInNewTab(it.anexoPdf);
+      };
+    });
+
+    main.querySelectorAll('[data-prod-toggle]').forEach(function(b){
+      b.onclick = function(){
+        var id = b.getAttribute('data-prod-toggle');
+        window.__ctProdOpenId = (window.__ctProdOpenId===id) ? null : id;
+        renderConteudo(main);
+      };
+    });
+    main.querySelectorAll('[data-prod-save]').forEach(function(b){
+      b.onclick = async function(){
+        var id = b.getAttribute('data-prod-save');
+        var data = document.getElementById('prod-data-' + id).value || todayISO();
+        var rendimento = document.getElementById('prod-rendimento-' + id).value.trim();
+        if(!rendimento){ showToast('Informe o rendimento obtido.', 'error'); return; }
+        var all = await getConteudo();
+        var idx = all.findIndex(function(x){ return x.id===id; });
+        if(idx===-1) return;
+        all[idx].producoes = all[idx].producoes || [];
+        all[idx].producoes.push({id:'p'+Date.now(), data:data, rendimento:rendimento, responsavel:user.nome || labelRole(user.role)});
+        var saved = await setData('conteudo', all);
+        if(saved){ logAudit(all[idx].marca==='todas' ? 'Ambas as unidades' : all[idx].marca, 'Registrou produção', all[idx].titulo + ' · ' + rendimento); }
+        window.__ctProdOpenId = null;
+        renderConteudo(main);
       };
     });
 
