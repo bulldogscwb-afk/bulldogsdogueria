@@ -260,8 +260,7 @@
     {id:'motoboys', label:'Motoboys', icon:'ti-motorbike', roles:['dono','gerente','supervisor','caixa']},
     {id:'fechamento', label:'Fechamento de caixa', icon:'ti-cash', roles:['dono','gerente','caixa']},
     {id:'documentos', label:'Documentos', icon:'ti-folder', roles:['dono','gerente']},
-    {id:'receitas', label:'Receitas', icon:'ti-book-2', roles:['dono','gerente','supervisor']},
-    {id:'processos', label:'Processos', icon:'ti-list-check', roles:['dono','gerente','supervisor']},
+    {id:'conteudo', label:'Receitas & Processos', icon:'ti-book-2', roles:['dono','gerente','supervisor']},
     {id:'checklists', label:'Checklists', icon:'ti-checkbox', roles:['dono','gerente','supervisor','equipe']},
     {id:'auditoria', label:'Auditoria', icon:'ti-history', roles:['dono','gerente']},
     {id:'config', label:'Configurações', icon:'ti-settings', roles:['dono']},
@@ -575,8 +574,7 @@
     else if(currentPage === 'motoboys') await renderMotoboys(main);
     else if(currentPage === 'fechamento') await renderFechamento(main);
     else if(currentPage === 'documentos') await renderDocumentos(main);
-    else if(currentPage === 'receitas') await renderList(main, 'recipes', 'Receitas', 'Ficha técnica única, compartilhada pelas duas unidades.');
-    else if(currentPage === 'processos') await renderList(main, 'processes', 'Processos', 'SOPs e rotinas únicas, compartilhadas pelas duas unidades.');
+    else if(currentPage === 'conteudo') await renderConteudo(main);
     else if(currentPage === 'checklists') await renderChecklists(main);
     else if(currentPage === 'auditoria') await renderAuditoria(main);
     else if(currentPage === 'config') await renderConfig(main);
@@ -1446,48 +1444,154 @@
   }
 
   // ============ RECEITAS / PROCESSOS (lista central) ============
-  async function renderList(main, key, title, sub){
-    var canEdit = user.role==='dono';
-    var items = await getData(key, []);
+  var MARCAS = ["BullDog's", "Constantins", "Dell'Iris"];
 
-    var html = pageHead(title, sub + (canEdit ? '' : ' · somente leitura'));
+  function resizeImageFile(file, maxDim){
+    return new Promise(function(resolve, reject){
+      var reader = new FileReader();
+      reader.onload = function(e){
+        var img = new Image();
+        img.onload = function(){
+          var w = img.width, h = img.height;
+          if(w > h){ if(w > maxDim){ h = Math.round(h*maxDim/w); w = maxDim; } }
+          else { if(h > maxDim){ w = Math.round(w*maxDim/h); h = maxDim; } }
+          var canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL('image/jpeg', 0.75));
+        };
+        img.onerror = function(){ reject(new Error('não consegui ler essa imagem')); };
+        img.src = e.target.result;
+      };
+      reader.onerror = function(){ reject(new Error('não consegui ler esse arquivo')); };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function getConteudo(){
+    var existing = await getData('conteudo', null);
+    if(existing !== null) return existing;
+    var oldRecipes = await getData('recipes', []);
+    var oldProcesses = await getData('processes', []);
+    var migrado = [];
+    oldRecipes.forEach(function(r){ migrado.push({id:r.id, tipo:'receita', titulo:r.title, corpo:r.body, marca:'todas', imagem:''}); });
+    oldProcesses.forEach(function(p){ migrado.push({id:p.id, tipo:'processo', titulo:p.title, corpo:p.body, marca:'todas', imagem:''}); });
+    await setData('conteudo', migrado);
+    return migrado;
+  }
+
+  function marcaLabel(m){ return m==='todas' ? 'Todas as marcas' : m; }
+
+  async function renderConteudo(main){
+    var canEdit = user.role==='dono';
+    var items = await getConteudo();
+    var filtroMarca = window.__ctMarca || 'todas';
+    var filtroTipo = window.__ctTipo || 'todos';
+
+    var html = pageHead('Receitas & Processos', 'Fichas técnicas e rotinas, por marca' + (canEdit ? '' : ' · somente leitura'));
+
+    html += '<div class="unit-toggle" style="margin-bottom:10px; width:fit-content; flex-wrap:wrap;">';
+    html += '<button data-ct-marca="todas" class="' + (filtroMarca==='todas'?'active':'') + '">Todas as marcas</button>';
+    MARCAS.forEach(function(m){
+      html += '<button data-ct-marca="' + escapeHtml(m) + '" class="' + (filtroMarca===m?'active':'') + '">' + escapeHtml(m) + '</button>';
+    });
+    html += '</div>';
+    html += '<div class="unit-toggle" style="margin-bottom:16px; width:fit-content;">';
+    ['todos','receita','processo'].forEach(function(t){
+      html += '<button data-ct-tipo="' + t + '" class="' + (filtroTipo===t?'active':'') + '">' + (t==='todos'?'Todos':t==='receita'?'Receitas':'Processos') + '</button>';
+    });
+    html += '</div>';
 
     if(canEdit){
       html += '<div class="card">';
       html += '<div style="font-weight:600; font-size:14px;">Novo item</div>';
-      html += '<div class="form-grid" style="grid-template-columns:1fr;">';
+      html += '<div class="form-grid">';
+      html += '<div class="form-field"><label>Tipo</label><select id="item-tipo"><option value="receita">Receita</option><option value="processo">Processo</option></select></div>';
+      html += '<div class="form-field"><label>Marca</label><select id="item-marca"><option value="todas">Todas as marcas</option>' + MARCAS.map(function(m){ return '<option value="' + escapeHtml(m) + '">' + escapeHtml(m) + '</option>'; }).join('') + '</select></div>';
+      html += '</div>';
+      html += '<div class="form-grid" style="grid-template-columns:1fr; margin-top:10px;">';
       html += formField('text','item-title','Título','Ex: Molho da casa');
       html += '<div class="form-field"><label for="item-body">Conteúdo</label><textarea id="item-body" rows="4" style="width:100%; padding:9px; border:1px solid var(--line); border-radius:7px; background:var(--paper);"></textarea></div>';
+      html += '<div class="form-field"><label for="item-image">Imagem (opcional)</label><input type="file" id="item-image" accept="image/*"><div id="item-image-preview" style="margin-top:8px;"></div></div>';
       html += '</div>';
       html += '<div style="margin-top:12px;"><button class="btn primary" id="item-save">Adicionar</button></div>';
       html += '</div><div style="height:16px"></div>';
     }
 
+    var filtered = items.filter(function(it){
+      var okMarca = filtroMarca==='todas' || it.marca===filtroMarca || it.marca==='todas';
+      var okTipo = filtroTipo==='todos' || it.tipo===filtroTipo;
+      return okMarca && okTipo;
+    });
+
     html += '<div class="card">';
-    if(items.length===0){
-      html += '<div class="empty">Nada cadastrado ainda.</div>';
+    if(filtered.length===0){
+      html += '<div class="empty">Nada cadastrado ainda com esse filtro.</div>';
     } else {
-      items.slice().reverse().forEach(function(it){
-        html += '<div class="item-row"><div class="item-title">' + escapeHtml(it.title) + '</div>' +
-          '<div class="item-body">' + escapeHtml(it.body) + '</div>' +
-          '<div class="item-meta">Fonte única · válido para as duas unidades</div></div>';
+      filtered.slice().reverse().forEach(function(it){
+        html += '<div class="item-row">';
+        html += '<div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px;">';
+        html += '<div class="item-title">' + escapeHtml(it.titulo) + '</div>';
+        html += '<div style="display:flex; gap:6px;">' +
+          '<span class="lock-badge">' + (it.tipo==='receita'?'Receita':'Processo') + '</span>' +
+          '<span class="lock-badge" style="background:var(--ok-bg); color:var(--ok-txt);">' + escapeHtml(marcaLabel(it.marca)) + '</span>' +
+          (canEdit ? '<button class="btn" data-remove-item="' + it.id + '" style="padding:4px 9px; font-size:11.5px;">Remover</button>' : '') +
+        '</div></div>';
+        if(it.imagem){ html += '<img src="' + it.imagem + '" alt="" style="max-width:260px; border-radius:8px; margin-top:8px; display:block;">'; }
+        html += '<div class="item-body">' + escapeHtml(it.corpo) + '</div>';
+        html += '</div>';
       });
     }
     html += '</div>';
 
     main.innerHTML = html;
 
+    main.querySelectorAll('[data-ct-marca]').forEach(function(b){
+      b.onclick = function(){ window.__ctMarca = b.getAttribute('data-ct-marca'); renderConteudo(main); };
+    });
+    main.querySelectorAll('[data-ct-tipo]').forEach(function(b){
+      b.onclick = function(){ window.__ctTipo = b.getAttribute('data-ct-tipo'); renderConteudo(main); };
+    });
+
     if(canEdit){
+      var pendingImage = '';
+      var imageInput = document.getElementById('item-image');
+      imageInput.addEventListener('change', async function(){
+        var file = imageInput.files[0];
+        if(!file) return;
+        try{
+          pendingImage = await resizeImageFile(file, 900);
+          document.getElementById('item-image-preview').innerHTML = '<img src="' + pendingImage + '" style="max-width:160px; border-radius:8px;">';
+        }catch(err){
+          showToast('Não consegui processar essa imagem.', 'error');
+        }
+      });
+
       document.getElementById('item-save').onclick = async function(){
         var t = document.getElementById('item-title').value.trim();
         var b = document.getElementById('item-body').value.trim();
+        var tipo = document.getElementById('item-tipo').value;
+        var marca = document.getElementById('item-marca').value;
         if(!t){ showToast('Dê um título ao item.', 'error'); return; }
-        var all = await getData(key, []);
-        all.push({id:'i'+Date.now(), title:t, body:b});
-        var saved = await setData(key, all);
-        if(saved){ logAudit('Ambas as unidades', 'Adicionou item em ' + title, t); }
-        renderList(main, key, title, sub);
+        var all = await getConteudo();
+        all.push({id:'i'+Date.now(), tipo:tipo, titulo:t, corpo:b, marca:marca, imagem:pendingImage});
+        var saved = await setData('conteudo', all);
+        if(saved){ logAudit(marca==='todas' ? 'Ambas as unidades' : marca, 'Adicionou ' + (tipo==='receita'?'receita':'processo'), t); }
+        renderConteudo(main);
       };
+
+      main.querySelectorAll('[data-remove-item]').forEach(function(btn){
+        btn.onclick = async function(){
+          if(!(await showConfirm('Remover este item?', 'Remover'))) return;
+          var id = btn.getAttribute('data-remove-item');
+          var all = await getConteudo();
+          var target = all.find(function(x){ return x.id===id; });
+          all = all.filter(function(x){ return x.id!==id; });
+          var saved = await setData('conteudo', all);
+          if(saved && target){ logAudit(target.marca==='todas' ? 'Ambas as unidades' : target.marca, 'Removeu item', target.titulo); }
+          renderConteudo(main);
+        };
+      });
     }
   }
 
