@@ -794,7 +794,7 @@
     if(!readOnly){
       html += '<div class="add-row-bar">';
       if(cadastro.length===0){
-        html += '<span style="font-size:12px; color:var(--muted);">Nenhum motoboy cadastrado ainda — peça ao Dono/Gerente para cadastrar em Motoboys → Motoboys cadastrados.</span>';
+        html += '<span style="font-size:12px; color:var(--muted);">Nenhum motoboy cadastrado ainda — peça ao Dono para cadastrar em Configurações → Cadastro de motoboys.</span>';
       } else {
         html += '<select class="grid-select" style="width:200px;" id="mb-new-nome"><option value="">Selecionar motoboy extra…</option>';
         cadastro.forEach(function(m){ html += '<option value="' + escapeHtml(m.nome) + '">' + escapeHtml(m.nome) + '</option>'; });
@@ -982,27 +982,6 @@
 
     html += '<div style="height:16px"></div>';
     html += '<div class="card">';
-    html += '<div style="font-weight:600; font-size:14px;">Motoboys cadastrados</div>';
-    html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Cadastro único, vale para as duas unidades. É essa lista que aparece na hora de montar a escala.</div>';
-    if(cadastroAtivos.length===0){
-      html += '<div class="empty">Nenhum motoboy cadastrado ainda.</div>';
-    } else {
-      html += '<table style="margin-top:10px;"><thead><tr><th>Nome</th><th>Pix</th><th></th></tr></thead><tbody>';
-      cadastroAtivos.forEach(function(m){
-        html += '<tr><td>' + escapeHtml(m.nome) + '</td><td class="num-cell">' + escapeHtml(m.pix||'—') + '</td>' +
-          '<td><button class="btn" data-remove-cadastro="' + m.id + '">Remover</button></td></tr>';
-      });
-      html += '</tbody></table>';
-    }
-    html += '<div class="add-row-bar">';
-    html += '<input class="grid-input wide" type="text" id="cad-new-nome" placeholder="Nome do motoboy">';
-    html += '<input class="grid-input wide" type="text" id="cad-new-pix" placeholder="Chave pix">';
-    html += '<button class="btn primary" id="cad-add-btn">Cadastrar motoboy</button>';
-    html += '</div>';
-    html += '</div>';
-
-    html += '<div style="height:16px"></div>';
-    html += '<div class="card">';
     html += '<div style="font-weight:600; font-size:14px;">Escala semanal — ' + labelUnit(viewUnit) + '</div>';
     html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Escolha o turno e o dia, depois diga quem trabalha. Isso já preenche sozinho o lançamento do caixa. Diária: almoço ' + money(rates.diariaAlmoco) + ' · tarde ' + money(rates.diariaTarde) + ' · noite ' + money(rates.diariaNoite) + ' (ajuste em Configurações).</div>';
 
@@ -1037,7 +1016,7 @@
     html += '</div>';
     html += '<div style="display:flex; gap:8px; flex-wrap:wrap;">';
     if(cadastroAtivos.length===0){
-      html += '<span style="font-size:12.5px; color:var(--muted);">Cadastre um motoboy abaixo primeiro para poder escalá-lo.</span>';
+      html += '<span style="font-size:12.5px; color:var(--muted);">Cadastre um motoboy em Configurações primeiro para poder escalá-lo.</span>';
     } else {
       html += '<select class="grid-select" style="width:220px;" id="esc-new-nome"><option value="">Selecionar motoboy…</option>';
       cadastroAtivos.forEach(function(m){ html += '<option value="' + escapeHtml(m.nome) + '">' + escapeHtml(m.nome) + '</option>'; });
@@ -1114,36 +1093,6 @@
     var escBtn = document.getElementById('esc-add-btn');
     if(escBtn){
       escBtn.onclick = function(){ addToSchedule(escDia, escTurno, document.getElementById('esc-new-nome').value); };
-    }
-
-    main.querySelectorAll('[data-remove-cadastro]').forEach(function(btn){
-      btn.onclick = async function(){
-        if(!(await showConfirm('Remover este motoboy do cadastro? Ele some das opções da escala, mas os lançamentos já feitos continuam no histórico.', 'Remover'))) return;
-        var id = btn.getAttribute('data-remove-cadastro');
-        var all = await getData('motoboy-cadastro', []);
-        var idx = all.findIndex(function(m){ return m.id===id; });
-        if(idx>-1){
-          var nome = all[idx].nome;
-          all[idx].ativo = false;
-          var saved = await setData('motoboy-cadastro', all);
-          if(saved){ logAudit(viewUnit, 'Removeu motoboy do cadastro', nome); }
-        }
-        renderMotoboysReport(main);
-      };
-    });
-
-    var cadBtn = document.getElementById('cad-add-btn');
-    if(cadBtn){
-      cadBtn.onclick = async function(){
-        var nome = document.getElementById('cad-new-nome').value.trim();
-        var pix = document.getElementById('cad-new-pix').value.trim();
-        if(!nome){ showToast('Informe o nome do motoboy.', 'error'); return; }
-        var all = await getData('motoboy-cadastro', []);
-        all.push({id:'m'+Date.now(), nome:nome, pix:pix, ativo:true});
-        var saved = await setData('motoboy-cadastro', all);
-        if(saved){ logAudit(viewUnit, 'Cadastrou motoboy', nome + (pix ? ' · pix ' + pix : '')); }
-        renderMotoboysReport(main);
-      };
     }
   }
 
@@ -1466,6 +1415,22 @@
   // ============ RECEITAS / PROCESSOS (lista central) ============
   var MARCAS = ["BullDog's", "Constantins", "Dell'Iris"];
 
+  function openDataUrlInNewTab(dataUrl){
+    try{
+      var parts = dataUrl.split(',');
+      var mimeMatch = parts[0].match(/data:(.*?);base64/);
+      var mime = mimeMatch ? mimeMatch[1] : 'application/pdf';
+      var binary = atob(parts[1]);
+      var bytes = new Uint8Array(binary.length);
+      for(var i=0; i<binary.length; i++){ bytes[i] = binary.charCodeAt(i); }
+      var blob = new Blob([bytes], {type: mime});
+      var blobUrl = URL.createObjectURL(blob);
+      window.open(blobUrl, '_blank');
+    }catch(err){
+      showToast('Não consegui abrir esse arquivo.', 'error');
+    }
+  }
+
   function resizeImageFile(file, maxDim){
     return new Promise(function(resolve, reject){
       var reader = new FileReader();
@@ -1533,7 +1498,8 @@
       html += '</div>';
       html += '<div class="form-grid" style="grid-template-columns:1fr; margin-top:10px;">';
       html += formField('text','item-title','Título','Ex: Molho da casa', editing ? editing.titulo : null);
-      html += '<div class="form-field"><label for="item-body">Conteúdo</label><textarea id="item-body" rows="4" style="width:100%; padding:9px; border:1px solid var(--line); border-radius:7px; background:var(--paper);">' + (editing ? escapeHtml(editing.corpo) : '') + '</textarea></div>';
+      html += '<div class="form-field"><label for="item-body">Conteúdo (ingredientes, modo de preparo, passos)</label><textarea id="item-body" rows="4" style="width:100%; padding:9px; border:1px solid var(--line); border-radius:7px; background:var(--paper);">' + (editing ? escapeHtml(editing.corpo) : '') + '</textarea></div>';
+      html += formField('text','item-rendimento','Rendimento (opcional, mais usado em receitas)','Ex: 6,8kg ou 40 porções', editing ? editing.rendimento : null);
       html += '<div class="form-field"><label for="item-image">Imagem ou PDF (opcional)</label><input type="file" id="item-image" accept="image/*,application/pdf"><div id="item-image-preview" style="margin-top:8px;">' +
         (editing && editing.imagem ? '<img src="' + editing.imagem + '" style="max-width:160px; border-radius:8px;">' : '') +
         (editing && editing.anexoPdf ? '<span style="font-size:12.5px; color:var(--muted);">PDF já anexado — escolha outro arquivo pra substituir.</span>' : '') +
@@ -1566,8 +1532,9 @@
           (canEdit ? '<button class="btn" data-remove-item="' + it.id + '" style="padding:4px 9px; font-size:11.5px;">Remover</button>' : '') +
         '</div></div>';
         if(it.imagem){ html += '<img src="' + it.imagem + '" alt="" style="max-width:260px; border-radius:8px; margin-top:8px; display:block;">'; }
-        if(it.anexoPdf){ html += '<a href="' + it.anexoPdf + '" target="_blank" rel="noopener" class="btn" style="margin-top:8px; display:inline-block;"><i class="ti ti-file-type-pdf" aria-hidden="true"></i> Abrir PDF</a>'; }
+        if(it.anexoPdf){ html += '<button class="btn" data-open-pdf="' + it.id + '" style="margin-top:8px;"><i class="ti ti-file-type-pdf" aria-hidden="true"></i> Abrir PDF</button>'; }
         html += '<div class="item-body">' + escapeHtml(it.corpo) + '</div>';
+        if(it.rendimento){ html += '<div style="margin-top:6px; font-size:12.5px; font-weight:600; color:var(--brass);">Rendimento: ' + escapeHtml(it.rendimento) + '</div>'; }
         html += '</div>';
       });
     }
@@ -1580,6 +1547,12 @@
     });
     main.querySelectorAll('[data-ct-tipo]').forEach(function(b){
       b.onclick = function(){ window.__ctTipo = b.getAttribute('data-ct-tipo'); renderConteudo(main); };
+    });
+    main.querySelectorAll('[data-open-pdf]').forEach(function(b){
+      b.onclick = function(){
+        var it = items.find(function(x){ return x.id===b.getAttribute('data-open-pdf'); });
+        if(it && it.anexoPdf) openDataUrlInNewTab(it.anexoPdf);
+      };
     });
 
     if(canEdit){
@@ -1615,16 +1588,17 @@
         var b = document.getElementById('item-body').value.trim();
         var tipo = document.getElementById('item-tipo').value;
         var marca = document.getElementById('item-marca').value;
+        var rendimento = document.getElementById('item-rendimento').value.trim();
         if(!t){ showToast('Dê um título ao item.', 'error'); return; }
         var all = await getConteudo();
         if(editing){
           var idx = all.findIndex(function(x){ return x.id===editing.id; });
-          if(idx>-1){ all[idx] = {id:editing.id, tipo:tipo, titulo:t, corpo:b, marca:marca, imagem:pendingImage, anexoPdf:pendingPdf}; }
+          if(idx>-1){ all[idx] = {id:editing.id, tipo:tipo, titulo:t, corpo:b, rendimento:rendimento, marca:marca, imagem:pendingImage, anexoPdf:pendingPdf}; }
           var saved1 = await setData('conteudo', all);
           if(saved1){ logAudit(marca==='todas' ? 'Ambas as unidades' : marca, 'Editou ' + (tipo==='receita'?'receita':'processo'), t); }
           window.__ctEditingId = null;
         } else {
-          all.push({id:'i'+Date.now(), tipo:tipo, titulo:t, corpo:b, marca:marca, imagem:pendingImage, anexoPdf:pendingPdf});
+          all.push({id:'i'+Date.now(), tipo:tipo, titulo:t, corpo:b, rendimento:rendimento, marca:marca, imagem:pendingImage, anexoPdf:pendingPdf});
           var saved2 = await setData('conteudo', all);
           if(saved2){ logAudit(marca==='todas' ? 'Ambas as unidades' : marca, 'Adicionou ' + (tipo==='receita'?'receita':'processo'), t); }
         }
@@ -1718,15 +1692,15 @@
   }
 
   async function renderAvaliacoesForm(main){
-    var loaded = await Promise.all([getData('users-list', []), getData('avaliacoes', [])]);
-    var pessoas = loaded[0].filter(function(u2){ return u2.unit===user.unit && u2.ativo!==false && (u2.role==='equipe' || u2.role==='caixa'); });
+    var loaded = await Promise.all([getData('colaboradores-avaliacao', []), getData('avaliacoes', [])]);
+    var pessoas = loaded[0].filter(function(c){ return c.unit===user.unit && c.ativo!==false; });
     var avals = loaded[1];
-    var avaliandoUsername = window.__avAvaliando || null;
+    var avaliandoId = window.__avAvaliando || null;
 
     var html = pageHead('Avaliações', 'Avaliação rápida da equipe da sua unidade');
 
-    if(avaliandoUsername){
-      var pessoa = pessoas.find(function(p){ return p.username===avaliandoUsername; });
+    if(avaliandoId){
+      var pessoa = pessoas.find(function(p){ return p.id===avaliandoId; });
       if(!pessoa){ window.__avAvaliando = null; return renderAvaliacoesForm(main); }
       html += '<button class="btn" id="av-back" style="margin-bottom:14px;"><i class="ti ti-arrow-left" aria-hidden="true"></i> Voltar</button>';
       html += '<div class="card">';
@@ -1749,7 +1723,7 @@
           notas[c.key] = parseInt(main.querySelector('[data-criterio="' + c.key + '"]').value, 10);
         });
         var comentario = document.getElementById('av-comentario').value.trim();
-        var novaAval = {id:'av'+Date.now(), unit:user.unit, avaliadoUsername:pessoa.username, avaliadoNome:pessoa.nome, avaliadorNome:user.nome, data:todayISO(), notas:notas, comentario:comentario};
+        var novaAval = {id:'av'+Date.now(), unit:user.unit, avaliadoId:pessoa.id, avaliadoNome:pessoa.nome, avaliadorNome:user.nome, data:todayISO(), notas:notas, comentario:comentario};
         var all = await getData('avaliacoes', []);
         all.push(novaAval);
         var saved = await setData('avaliacoes', all);
@@ -1763,15 +1737,15 @@
 
     html += '<div class="card">';
     if(pessoas.length===0){
-      html += '<div class="empty">Nenhum colaborador (Equipe/Caixa) cadastrado na sua unidade ainda — cadastre em Usuários.</div>';
+      html += '<div class="empty">Nenhum colaborador cadastrado na sua unidade ainda — peça ao Dono/Gerente para cadastrar em Configurações → Cadastro de colaboradores.</div>';
     } else {
-      html += '<table><thead><tr><th>Nome</th><th>Nível</th><th>Última avaliação</th><th></th></tr></thead><tbody>';
+      html += '<table><thead><tr><th>Nome</th><th>Última avaliação</th><th></th></tr></thead><tbody>';
       pessoas.forEach(function(p){
-        var minhas = avals.filter(function(a){ return a.avaliadoUsername===p.username; }).sort(function(a,b){ return b.data.localeCompare(a.data); });
+        var minhas = avals.filter(function(a){ return a.avaliadoId===p.id; }).sort(function(a,b){ return b.data.localeCompare(a.data); });
         var ultima = minhas[0];
-        html += '<tr><td>' + escapeHtml(p.nome) + '</td><td>' + labelRole(p.role) + '</td>' +
+        html += '<tr><td>' + escapeHtml(p.nome) + '</td>' +
           '<td class="num-cell">' + (ultima ? ultima.data + ' (média ' + mediaAvaliacao(ultima).toFixed(1) + ')' : '—') + '</td>' +
-          '<td><button class="btn primary" data-avaliar="' + p.username + '">Avaliar</button></td></tr>';
+          '<td><button class="btn primary" data-avaliar="' + p.id + '">Avaliar</button></td></tr>';
       });
       html += '</tbody></table>';
     }
@@ -1802,8 +1776,8 @@
 
     var porPessoa = {};
     avals.forEach(function(a){
-      if(!porPessoa[a.avaliadoUsername]) porPessoa[a.avaliadoUsername] = {nome:a.avaliadoNome, avals:[]};
-      porPessoa[a.avaliadoUsername].avals.push(a);
+      if(!porPessoa[a.avaliadoId]) porPessoa[a.avaliadoId] = {nome:a.avaliadoNome, avals:[]};
+      porPessoa[a.avaliadoId].avals.push(a);
     });
     var nomes = Object.keys(porPessoa).sort(function(a,b){ return porPessoa[a].nome.localeCompare(porPessoa[b].nome); });
 
@@ -1919,6 +1893,9 @@
     html += '<div class="grid-2">';
 
     var ratesByUnit = await Promise.all(UNITS.map(function(u){ return getData('rates-' + u.id, DEFAULT_RATES); }));
+    var cfgLoaded = await Promise.all([getData('motoboy-cadastro', []), getData('colaboradores-avaliacao', [])]);
+    var motoboyCadastro = cfgLoaded[0].filter(function(m){ return m.ativo!==false; });
+    var colabAvaliacao = cfgLoaded[1].filter(function(c){ return c.ativo!==false; });
 
     for(var i=0;i<UNITS.length;i++){
       var u = UNITS[i];
@@ -1940,6 +1917,48 @@
       html += '<div style="margin-top:12px;"><button class="btn primary" data-unit="' + u.id + '">Salvar ' + u.label + '</button></div>';
       html += '</div>';
     }
+    html += '</div>';
+
+    html += '<div style="height:16px"></div>';
+    html += '<div class="card">';
+    html += '<div style="font-weight:600; font-size:14px;">Cadastro de motoboys</div>';
+    html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Nomes que aparecem na escala e no lançamento diário de Motoboys.</div>';
+    if(motoboyCadastro.length===0){
+      html += '<div class="empty">Nenhum motoboy cadastrado ainda.</div>';
+    } else {
+      html += '<table style="margin-top:10px;"><thead><tr><th>Nome</th><th>Pix</th><th></th></tr></thead><tbody>';
+      motoboyCadastro.forEach(function(m){
+        html += '<tr><td>' + escapeHtml(m.nome) + '</td><td class="num-cell">' + escapeHtml(m.pix||'—') + '</td>' +
+          '<td><button class="btn" data-remove-moto-cad="' + m.id + '">Remover</button></td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '<div class="add-row-bar">';
+    html += '<input class="grid-input wide" type="text" id="moto-cad-nome" placeholder="Nome do motoboy">';
+    html += '<input class="grid-input wide" type="text" id="moto-cad-pix" placeholder="Chave pix">';
+    html += '<button class="btn primary" id="moto-cad-add">Cadastrar motoboy</button>';
+    html += '</div>';
+    html += '</div>';
+
+    html += '<div style="height:16px"></div>';
+    html += '<div class="card">';
+    html += '<div style="font-weight:600; font-size:14px;">Cadastro de colaboradores (Equipe/Caixa)</div>';
+    html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Nomes que aparecem pro Supervisor avaliar. Não precisa de login — é só o nome, por unidade.</div>';
+    if(colabAvaliacao.length===0){
+      html += '<div class="empty">Nenhum colaborador cadastrado ainda.</div>';
+    } else {
+      html += '<table style="margin-top:10px;"><thead><tr><th>Nome</th><th>Unidade</th><th></th></tr></thead><tbody>';
+      colabAvaliacao.forEach(function(c){
+        html += '<tr><td>' + escapeHtml(c.nome) + '</td><td>' + labelUnit(c.unit) + '</td>' +
+          '<td><button class="btn" data-remove-colab-cad="' + c.id + '">Remover</button></td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '<div class="add-row-bar">';
+    html += '<input class="grid-input wide" type="text" id="colab-cad-nome" placeholder="Nome do colaborador">';
+    html += '<select class="grid-select" id="colab-cad-unit">' + UNITS.map(function(u2){ return '<option value="' + u2.id + '">' + u2.label + '</option>'; }).join('') + '</select>';
+    html += '<button class="btn primary" id="colab-cad-add">Cadastrar colaborador</button>';
+    html += '</div>';
     html += '</div>';
 
     var CONFIGURABLE_ROLES = ['gerente','supervisor','equipe','caixa'];
@@ -1971,6 +1990,60 @@
 
     main.innerHTML = html;
 
+    main.querySelectorAll('[data-remove-moto-cad]').forEach(function(btn){
+      btn.onclick = async function(){
+        if(!(await showConfirm('Remover este motoboy do cadastro? Ele some das opções da escala, mas os lançamentos já feitos continuam no histórico.', 'Remover'))) return;
+        var id = btn.getAttribute('data-remove-moto-cad');
+        var all = await getData('motoboy-cadastro', []);
+        var idx = all.findIndex(function(m){ return m.id===id; });
+        if(idx>-1){
+          var nome = all[idx].nome;
+          all[idx].ativo = false;
+          var saved = await setData('motoboy-cadastro', all);
+          if(saved){ logAudit('Ambas as unidades', 'Removeu motoboy do cadastro', nome); }
+        }
+        renderConfig(main);
+      };
+    });
+
+    document.getElementById('moto-cad-add').onclick = async function(){
+      var nome = document.getElementById('moto-cad-nome').value.trim();
+      var pix = document.getElementById('moto-cad-pix').value.trim();
+      if(!nome){ showToast('Informe o nome do motoboy.', 'error'); return; }
+      var all = await getData('motoboy-cadastro', []);
+      all.push({id:'m'+Date.now(), nome:nome, pix:pix, ativo:true});
+      var saved = await setData('motoboy-cadastro', all);
+      if(saved){ logAudit('Ambas as unidades', 'Cadastrou motoboy', nome + (pix ? ' · pix ' + pix : '')); }
+      renderConfig(main);
+    };
+
+    main.querySelectorAll('[data-remove-colab-cad]').forEach(function(btn){
+      btn.onclick = async function(){
+        if(!(await showConfirm('Remover este colaborador do cadastro?', 'Remover'))) return;
+        var id = btn.getAttribute('data-remove-colab-cad');
+        var all = await getData('colaboradores-avaliacao', []);
+        var idx = all.findIndex(function(c){ return c.id===id; });
+        if(idx>-1){
+          var nome = all[idx].nome, unit = all[idx].unit;
+          all[idx].ativo = false;
+          var saved = await setData('colaboradores-avaliacao', all);
+          if(saved){ logAudit(unit, 'Removeu colaborador do cadastro', nome); }
+        }
+        renderConfig(main);
+      };
+    });
+
+    document.getElementById('colab-cad-add').onclick = async function(){
+      var nome = document.getElementById('colab-cad-nome').value.trim();
+      var unit = document.getElementById('colab-cad-unit').value;
+      if(!nome){ showToast('Informe o nome do colaborador.', 'error'); return; }
+      var all = await getData('colaboradores-avaliacao', []);
+      all.push({id:'co'+Date.now(), nome:nome, unit:unit, ativo:true});
+      var saved = await setData('colaboradores-avaliacao', all);
+      if(saved){ logAudit(unit, 'Cadastrou colaborador', nome); }
+      renderConfig(main);
+    };
+
     document.getElementById('nav-perm-save').onclick = async function(){
       var newPerms = {};
       NAV.filter(function(n){ return n.id!=='config'; }).forEach(function(n){
@@ -1992,7 +2065,7 @@
 
     var BACKUP_KEYS = ['motoboys-entries','rates-unidade1','rates-unidade2','motoboy-schedule','motoboy-cadastro',
       'motoboys-turno-status','caixa-fechamento','caixa-fechamento-status','conteudo','nav-permissions','avaliacoes',
-      'checklist-status','audit-log','users-list'];
+      'colaboradores-avaliacao','checklist-status','audit-log','users-list'];
 
     document.getElementById('backup-export').onclick = async function(){
       var values = await Promise.all(BACKUP_KEYS.map(function(k){ return getData(k, null); }));
