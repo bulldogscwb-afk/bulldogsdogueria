@@ -262,6 +262,7 @@
     {id:'documentos', label:'Documentos', icon:'ti-folder', roles:['dono','gerente']},
     {id:'conteudo', label:'Receitas & Processos', icon:'ti-book-2', roles:['dono','gerente','supervisor']},
     {id:'checklists', label:'Checklists', icon:'ti-checkbox', roles:['dono','gerente','supervisor','equipe']},
+    {id:'avaliacoes', label:'Avaliações', icon:'ti-star', roles:['dono','gerente','supervisor']},
     {id:'auditoria', label:'Auditoria', icon:'ti-history', roles:['dono','gerente']},
     {id:'config', label:'Configurações', icon:'ti-settings', roles:['dono']},
     {id:'usuarios', label:'Usuários', icon:'ti-users', roles:['dono','gerente']}
@@ -498,10 +499,23 @@
     document.getElementById('lg-password').addEventListener('keydown', function(ev){ if(ev.key==='Enter') tryLogin(); });
   }
 
-  function enterApp(){
+  var navPermissions = null;
+  async function loadNavPermissions(){
+    navPermissions = await getData('nav-permissions', {});
+  }
+  function effectiveRoles(navItem){
+    return (navPermissions && navPermissions[navItem.id]) || navItem.roles;
+  }
+  function hasNavAccess(navItem){
+    return user.role==='dono' || effectiveRoles(navItem).indexOf(user.role) !== -1;
+  }
+
+  async function enterApp(){
     document.getElementById('view-login').style.display = 'none';
     document.getElementById('view-app').style.display = 'block';
-    currentPage = NAV.find(function(n){ return n.roles.indexOf(user.role) !== -1; }).id;
+    await loadNavPermissions();
+    var firstAllowed = NAV.find(function(n){ return hasNavAccess(n); });
+    currentPage = firstAllowed ? firstAllowed.id : NAV[0].id;
     renderApp();
     setupMobileNav();
     setupTableScroll();
@@ -552,7 +566,7 @@
 
     var navWrap = document.getElementById('nav-list');
     navWrap.innerHTML = '';
-    NAV.filter(function(n){ return n.roles.indexOf(user.role) !== -1; }).forEach(function(n){
+    NAV.filter(hasNavAccess).forEach(function(n){
       var b = document.createElement('button');
       b.className = 'navitem' + (currentPage===n.id ? ' active' : '');
       b.innerHTML = '<i class="ti ' + n.icon + '" aria-hidden="true"></i><span>' + n.label + '</span>';
@@ -569,6 +583,11 @@
 
   async function renderPage(){
     var main = document.getElementById('main-content');
+    var navItem = NAV.find(function(n){ return n.id===currentPage; });
+    if(navItem && !hasNavAccess(navItem)){
+      var fallback = NAV.find(function(n){ return hasNavAccess(n); });
+      currentPage = fallback ? fallback.id : currentPage;
+    }
     main.innerHTML = '<div class="empty">Carregando…</div>';
     if(currentPage === 'dashboard') await renderDashboard(main);
     else if(currentPage === 'motoboys') await renderMotoboys(main);
@@ -576,6 +595,7 @@
     else if(currentPage === 'documentos') await renderDocumentos(main);
     else if(currentPage === 'conteudo') await renderConteudo(main);
     else if(currentPage === 'checklists') await renderChecklists(main);
+    else if(currentPage === 'avaliacoes') await renderAvaliacoes(main);
     else if(currentPage === 'auditoria') await renderAuditoria(main);
     else if(currentPage === 'config') await renderConfig(main);
     else if(currentPage === 'usuarios') await renderUsuarios(main);
@@ -1487,6 +1507,8 @@
     var items = await getConteudo();
     var filtroMarca = window.__ctMarca || 'todas';
     var filtroTipo = window.__ctTipo || 'todos';
+    var editingId = window.__ctEditingId || null;
+    var editing = editingId ? items.find(function(x){ return x.id===editingId; }) : null;
 
     var html = pageHead('Receitas & Processos', 'Fichas técnicas e rotinas, por marca' + (canEdit ? '' : ' · somente leitura'));
 
@@ -1504,22 +1526,27 @@
 
     if(canEdit){
       html += '<div class="card">';
-      html += '<div style="font-weight:600; font-size:14px;">Novo item</div>';
+      html += '<div style="font-weight:600; font-size:14px;">' + (editing ? 'Editando: ' + escapeHtml(editing.titulo) : 'Novo item') + '</div>';
       html += '<div class="form-grid">';
-      html += '<div class="form-field"><label>Tipo</label><select id="item-tipo"><option value="receita">Receita</option><option value="processo">Processo</option></select></div>';
-      html += '<div class="form-field"><label>Marca</label><select id="item-marca"><option value="todas">Todas as marcas</option>' + MARCAS.map(function(m){ return '<option value="' + escapeHtml(m) + '">' + escapeHtml(m) + '</option>'; }).join('') + '</select></div>';
+      html += '<div class="form-field"><label>Tipo</label><select id="item-tipo"><option value="receita"' + (editing&&editing.tipo==='receita'?' selected':'') + '>Receita</option><option value="processo"' + (editing&&editing.tipo==='processo'?' selected':'') + '>Processo</option></select></div>';
+      html += '<div class="form-field"><label>Marca</label><select id="item-marca"><option value="todas"' + (editing&&editing.marca==='todas'?' selected':'') + '>Todas as marcas</option>' + MARCAS.map(function(m){ return '<option value="' + escapeHtml(m) + '"' + (editing&&editing.marca===m?' selected':'') + '>' + escapeHtml(m) + '</option>'; }).join('') + '</select></div>';
       html += '</div>';
       html += '<div class="form-grid" style="grid-template-columns:1fr; margin-top:10px;">';
-      html += formField('text','item-title','Título','Ex: Molho da casa');
-      html += '<div class="form-field"><label for="item-body">Conteúdo</label><textarea id="item-body" rows="4" style="width:100%; padding:9px; border:1px solid var(--line); border-radius:7px; background:var(--paper);"></textarea></div>';
-      html += '<div class="form-field"><label for="item-image">Imagem (opcional)</label><input type="file" id="item-image" accept="image/*"><div id="item-image-preview" style="margin-top:8px;"></div></div>';
+      html += formField('text','item-title','Título','Ex: Molho da casa', editing ? editing.titulo : null);
+      html += '<div class="form-field"><label for="item-body">Conteúdo</label><textarea id="item-body" rows="4" style="width:100%; padding:9px; border:1px solid var(--line); border-radius:7px; background:var(--paper);">' + (editing ? escapeHtml(editing.corpo) : '') + '</textarea></div>';
+      html += '<div class="form-field"><label for="item-image">Imagem ou PDF (opcional)</label><input type="file" id="item-image" accept="image/*,application/pdf"><div id="item-image-preview" style="margin-top:8px;">' +
+        (editing && editing.imagem ? '<img src="' + editing.imagem + '" style="max-width:160px; border-radius:8px;">' : '') +
+        (editing && editing.anexoPdf ? '<span style="font-size:12.5px; color:var(--muted);">PDF já anexado — escolha outro arquivo pra substituir.</span>' : '') +
+        '</div></div>';
       html += '</div>';
-      html += '<div style="margin-top:12px;"><button class="btn primary" id="item-save">Adicionar</button></div>';
+      html += '<div style="margin-top:12px; display:flex; gap:10px;"><button class="btn primary" id="item-save">' + (editing ? 'Salvar edição' : 'Adicionar') + '</button>';
+      if(editing){ html += '<button class="btn" id="item-cancel">Cancelar</button>'; }
+      html += '</div>';
       html += '</div><div style="height:16px"></div>';
     }
 
     var filtered = items.filter(function(it){
-      var okMarca = filtroMarca==='todas' || it.marca===filtroMarca || it.marca==='todas';
+      var okMarca = filtroMarca==='todas' || it.marca===filtroMarca;
       var okTipo = filtroTipo==='todos' || it.tipo===filtroTipo;
       return okMarca && okTipo;
     });
@@ -1535,9 +1562,11 @@
         html += '<div style="display:flex; gap:6px;">' +
           '<span class="lock-badge">' + (it.tipo==='receita'?'Receita':'Processo') + '</span>' +
           '<span class="lock-badge" style="background:var(--ok-bg); color:var(--ok-txt);">' + escapeHtml(marcaLabel(it.marca)) + '</span>' +
+          (canEdit ? '<button class="btn" data-edit-item="' + it.id + '" style="padding:4px 9px; font-size:11.5px;">Editar</button>' : '') +
           (canEdit ? '<button class="btn" data-remove-item="' + it.id + '" style="padding:4px 9px; font-size:11.5px;">Remover</button>' : '') +
         '</div></div>';
         if(it.imagem){ html += '<img src="' + it.imagem + '" alt="" style="max-width:260px; border-radius:8px; margin-top:8px; display:block;">'; }
+        if(it.anexoPdf){ html += '<a href="' + it.anexoPdf + '" target="_blank" rel="noopener" class="btn" style="margin-top:8px; display:inline-block;"><i class="ti ti-file-type-pdf" aria-hidden="true"></i> Abrir PDF</a>'; }
         html += '<div class="item-body">' + escapeHtml(it.corpo) + '</div>';
         html += '</div>';
       });
@@ -1554,16 +1583,30 @@
     });
 
     if(canEdit){
-      var pendingImage = '';
+      var pendingImage = editing ? (editing.imagem || '') : '';
+      var pendingPdf = editing ? (editing.anexoPdf || '') : '';
       var imageInput = document.getElementById('item-image');
       imageInput.addEventListener('change', async function(){
         var file = imageInput.files[0];
         if(!file) return;
         try{
-          pendingImage = await resizeImageFile(file, 900);
-          document.getElementById('item-image-preview').innerHTML = '<img src="' + pendingImage + '" style="max-width:160px; border-radius:8px;">';
+          if(file.type==='application/pdf'){
+            if(file.size > 4*1024*1024){ showToast('PDF muito grande (máximo 4MB).', 'error'); return; }
+            pendingPdf = await new Promise(function(resolve, reject){
+              var reader = new FileReader();
+              reader.onload = function(e){ resolve(e.target.result); };
+              reader.onerror = function(){ reject(new Error('erro')); };
+              reader.readAsDataURL(file);
+            });
+            pendingImage = '';
+            document.getElementById('item-image-preview').innerHTML = '<span style="font-size:12.5px; color:var(--muted);">PDF selecionado: ' + escapeHtml(file.name) + '</span>';
+          } else {
+            pendingImage = await resizeImageFile(file, 900);
+            pendingPdf = '';
+            document.getElementById('item-image-preview').innerHTML = '<img src="' + pendingImage + '" style="max-width:160px; border-radius:8px;">';
+          }
         }catch(err){
-          showToast('Não consegui processar essa imagem.', 'error');
+          showToast('Não consegui processar esse arquivo.', 'error');
         }
       });
 
@@ -1574,11 +1617,26 @@
         var marca = document.getElementById('item-marca').value;
         if(!t){ showToast('Dê um título ao item.', 'error'); return; }
         var all = await getConteudo();
-        all.push({id:'i'+Date.now(), tipo:tipo, titulo:t, corpo:b, marca:marca, imagem:pendingImage});
-        var saved = await setData('conteudo', all);
-        if(saved){ logAudit(marca==='todas' ? 'Ambas as unidades' : marca, 'Adicionou ' + (tipo==='receita'?'receita':'processo'), t); }
+        if(editing){
+          var idx = all.findIndex(function(x){ return x.id===editing.id; });
+          if(idx>-1){ all[idx] = {id:editing.id, tipo:tipo, titulo:t, corpo:b, marca:marca, imagem:pendingImage, anexoPdf:pendingPdf}; }
+          var saved1 = await setData('conteudo', all);
+          if(saved1){ logAudit(marca==='todas' ? 'Ambas as unidades' : marca, 'Editou ' + (tipo==='receita'?'receita':'processo'), t); }
+          window.__ctEditingId = null;
+        } else {
+          all.push({id:'i'+Date.now(), tipo:tipo, titulo:t, corpo:b, marca:marca, imagem:pendingImage, anexoPdf:pendingPdf});
+          var saved2 = await setData('conteudo', all);
+          if(saved2){ logAudit(marca==='todas' ? 'Ambas as unidades' : marca, 'Adicionou ' + (tipo==='receita'?'receita':'processo'), t); }
+        }
         renderConteudo(main);
       };
+
+      var cancelBtn = document.getElementById('item-cancel');
+      if(cancelBtn){ cancelBtn.onclick = function(){ window.__ctEditingId = null; renderConteudo(main); }; }
+
+      main.querySelectorAll('[data-edit-item]').forEach(function(btn){
+        btn.onclick = function(){ window.__ctEditingId = btn.getAttribute('data-edit-item'); renderConteudo(main); };
+      });
 
       main.querySelectorAll('[data-remove-item]').forEach(function(btn){
         btn.onclick = async function(){
@@ -1634,6 +1692,161 @@
         renderChecklists(main);
       };
     });
+  }
+
+  // ============ AVALIAÇÕES (supervisor avalia; dono/gerente acompanham) ============
+  var CRITERIOS_AVALIACAO = [
+    {key:'pontualidade', label:'Pontualidade'},
+    {key:'apresentacao', label:'Apresentação/Higiene'},
+    {key:'atendimento', label:'Atendimento/Educação'},
+    {key:'trabalhoEquipe', label:'Trabalho em equipe'},
+    {key:'agilidade', label:'Agilidade'}
+  ];
+
+  function mediaAvaliacao(av){
+    var soma = 0;
+    CRITERIOS_AVALIACAO.forEach(function(c){ soma += (av.notas[c.key]||0); });
+    return soma / CRITERIOS_AVALIACAO.length;
+  }
+
+  async function renderAvaliacoes(main){
+    if(user.role==='supervisor'){
+      await renderAvaliacoesForm(main);
+    } else {
+      await renderAvaliacoesReport(main);
+    }
+  }
+
+  async function renderAvaliacoesForm(main){
+    var loaded = await Promise.all([getData('users-list', []), getData('avaliacoes', [])]);
+    var pessoas = loaded[0].filter(function(u2){ return u2.unit===user.unit && u2.ativo!==false && (u2.role==='equipe' || u2.role==='caixa'); });
+    var avals = loaded[1];
+    var avaliandoUsername = window.__avAvaliando || null;
+
+    var html = pageHead('Avaliações', 'Avaliação rápida da equipe da sua unidade');
+
+    if(avaliandoUsername){
+      var pessoa = pessoas.find(function(p){ return p.username===avaliandoUsername; });
+      if(!pessoa){ window.__avAvaliando = null; return renderAvaliacoesForm(main); }
+      html += '<button class="btn" id="av-back" style="margin-bottom:14px;"><i class="ti ti-arrow-left" aria-hidden="true"></i> Voltar</button>';
+      html += '<div class="card">';
+      html += '<div style="font-weight:600; font-size:14px; margin-bottom:14px;">Avaliar ' + escapeHtml(pessoa.nome) + '</div>';
+      CRITERIOS_AVALIACAO.forEach(function(c){
+        html += '<div class="kv-row"><div class="kv-label">' + c.label + '</div>' +
+          '<select class="grid-select" data-criterio="' + c.key + '" style="width:160px;">' +
+            [1,2,3,4,5].map(function(n){ return '<option value="' + n + '"' + (n===3?' selected':'') + '>' + n + ' — ' + ['Ruim','Fraco','Ok','Bom','Ótimo'][n-1] + '</option>'; }).join('') +
+          '</select></div>';
+      });
+      html += '<div class="form-field" style="margin-top:14px;"><label for="av-comentario">Comentário (opcional)</label><textarea id="av-comentario" rows="3" style="width:100%; padding:9px; border:1px solid var(--line); border-radius:7px; background:var(--paper);"></textarea></div>';
+      html += '<div style="margin-top:14px;"><button class="btn primary" id="av-save">Salvar avaliação</button></div>';
+      html += '</div>';
+
+      main.innerHTML = html;
+      document.getElementById('av-back').onclick = function(){ window.__avAvaliando = null; renderAvaliacoesForm(main); };
+      document.getElementById('av-save').onclick = async function(){
+        var notas = {};
+        CRITERIOS_AVALIACAO.forEach(function(c){
+          notas[c.key] = parseInt(main.querySelector('[data-criterio="' + c.key + '"]').value, 10);
+        });
+        var comentario = document.getElementById('av-comentario').value.trim();
+        var novaAval = {id:'av'+Date.now(), unit:user.unit, avaliadoUsername:pessoa.username, avaliadoNome:pessoa.nome, avaliadorNome:user.nome, data:todayISO(), notas:notas, comentario:comentario};
+        var all = await getData('avaliacoes', []);
+        all.push(novaAval);
+        var saved = await setData('avaliacoes', all);
+        if(saved){ logAudit(user.unit, 'Avaliou colaborador', pessoa.nome + ' · média ' + mediaAvaliacao(novaAval).toFixed(1)); }
+        window.__avAvaliando = null;
+        showToast('Avaliação registrada.');
+        renderAvaliacoesForm(main);
+      };
+      return;
+    }
+
+    html += '<div class="card">';
+    if(pessoas.length===0){
+      html += '<div class="empty">Nenhum colaborador (Equipe/Caixa) cadastrado na sua unidade ainda — cadastre em Usuários.</div>';
+    } else {
+      html += '<table><thead><tr><th>Nome</th><th>Nível</th><th>Última avaliação</th><th></th></tr></thead><tbody>';
+      pessoas.forEach(function(p){
+        var minhas = avals.filter(function(a){ return a.avaliadoUsername===p.username; }).sort(function(a,b){ return b.data.localeCompare(a.data); });
+        var ultima = minhas[0];
+        html += '<tr><td>' + escapeHtml(p.nome) + '</td><td>' + labelRole(p.role) + '</td>' +
+          '<td class="num-cell">' + (ultima ? ultima.data + ' (média ' + mediaAvaliacao(ultima).toFixed(1) + ')' : '—') + '</td>' +
+          '<td><button class="btn primary" data-avaliar="' + p.username + '">Avaliar</button></td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div>';
+
+    main.innerHTML = html;
+    main.querySelectorAll('[data-avaliar]').forEach(function(b){
+      b.onclick = function(){ window.__avAvaliando = b.getAttribute('data-avaliar'); renderAvaliacoesForm(main); };
+    });
+  }
+
+  async function renderAvaliacoesReport(main){
+    var canPickUnit = user.role==='dono';
+    var viewUnit = canPickUnit ? (window.__avUnit || 'unidade1') : user.unit;
+    window.__avUnit = viewUnit;
+
+    var avals = (await getData('avaliacoes', [])).filter(function(a){ return a.unit===viewUnit; });
+
+    var html = pageHead('Avaliações', 'Acompanhamento da equipe, feito pelos supervisores');
+
+    if(canPickUnit){
+      html += '<div class="unit-toggle" style="margin-bottom:14px; width:fit-content;">';
+      UNITS.forEach(function(u){
+        html += '<button data-unit="' + u.id + '" class="' + (viewUnit===u.id?'active':'') + '">' + u.label + '</button>';
+      });
+      html += '</div>';
+    }
+
+    var porPessoa = {};
+    avals.forEach(function(a){
+      if(!porPessoa[a.avaliadoUsername]) porPessoa[a.avaliadoUsername] = {nome:a.avaliadoNome, avals:[]};
+      porPessoa[a.avaliadoUsername].avals.push(a);
+    });
+    var nomes = Object.keys(porPessoa).sort(function(a,b){ return porPessoa[a].nome.localeCompare(porPessoa[b].nome); });
+
+    html += '<div class="card">';
+    html += '<div style="font-weight:600; font-size:14px; margin-bottom:8px;">Resumo por colaborador</div>';
+    if(nomes.length===0){
+      html += '<div class="empty">Nenhuma avaliação registrada ainda nesta unidade.</div>';
+    } else {
+      html += '<table><thead><tr><th>Nome</th><th>Avaliações</th><th>Média geral</th><th>Última</th></tr></thead><tbody>';
+      nomes.forEach(function(username){
+        var p = porPessoa[username];
+        var medias = p.avals.map(mediaAvaliacao);
+        var mediaGeral = medias.reduce(function(a,b){ return a+b; }, 0) / medias.length;
+        var ultima = p.avals.slice().sort(function(a,b){ return b.data.localeCompare(a.data); })[0];
+        html += '<tr><td>' + escapeHtml(p.nome) + '</td><td class="num-cell">' + p.avals.length + '</td>' +
+          '<td class="num-cell" style="font-weight:600;">' + mediaGeral.toFixed(1) + '</td>' +
+          '<td class="num-cell">' + ultima.data + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div>';
+
+    html += '<div style="height:16px"></div><div class="card">';
+    html += '<div style="font-weight:600; font-size:14px; margin-bottom:8px;">Histórico completo</div>';
+    if(avals.length===0){
+      html += '<div class="empty">Nada por aqui ainda.</div>';
+    } else {
+      html += '<table><thead><tr><th>Data</th><th>Colaborador</th><th>Avaliador</th><th>Média</th><th>Comentário</th></tr></thead><tbody>';
+      avals.slice().sort(function(a,b){ return b.data.localeCompare(a.data); }).forEach(function(a){
+        html += '<tr><td class="num-cell">' + a.data + '</td><td>' + escapeHtml(a.avaliadoNome) + '</td><td>' + escapeHtml(a.avaliadorNome) + '</td>' +
+          '<td class="num-cell">' + mediaAvaliacao(a).toFixed(1) + '</td><td style="color:var(--muted);">' + escapeHtml(a.comentario||'—') + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div>';
+
+    main.innerHTML = html;
+
+    if(canPickUnit){
+      main.querySelectorAll('.unit-toggle button').forEach(function(b){
+        b.onclick = function(){ window.__avUnit = b.getAttribute('data-unit'); renderAvaliacoesReport(main); };
+      });
+    }
   }
 
   // ============ AUDITORIA (dono/gerente) ============
@@ -1729,6 +1942,22 @@
     }
     html += '</div>';
 
+    var CONFIGURABLE_ROLES = ['gerente','supervisor','equipe','caixa'];
+    html += '<div style="height:16px"></div><div class="card">';
+    html += '<div style="font-weight:600; font-size:14px;">Acesso por nível</div>';
+    html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Escolha quais telas cada nível pode acessar. Dono sempre tem acesso a tudo, e essa tela de Configurações continua exclusiva do Dono.</div>';
+    html += '<table style="margin-top:12px;"><thead><tr><th>Tela</th>' + CONFIGURABLE_ROLES.map(function(r){ return '<th>' + labelRole(r) + '</th>'; }).join('') + '</tr></thead><tbody>';
+    NAV.filter(function(n){ return n.id!=='config'; }).forEach(function(n){
+      var eff = effectiveRoles(n);
+      html += '<tr><td>' + n.label + '</td>' + CONFIGURABLE_ROLES.map(function(r){
+        var checked = eff.indexOf(r)!==-1;
+        return '<td style="text-align:center;"><input type="checkbox" data-nav-perm="' + n.id + '" data-role="' + r + '"' + (checked?' checked':'') + '></td>';
+      }).join('') + '</tr>';
+    });
+    html += '</tbody></table>';
+    html += '<div style="margin-top:14px;"><button class="btn primary" id="nav-perm-save">Salvar acessos</button></div>';
+    html += '</div>';
+
     html += '<div style="height:16px"></div><div class="card">';
     html += '<div style="font-weight:600; font-size:14px;">Backup</div>';
     html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Baixa uma cópia completa de todos os dados do sistema (motoboys, caixa, colaboradores, escala, usuários, auditoria). Guarde periodicamente como segurança extra.</div>';
@@ -1742,8 +1971,27 @@
 
     main.innerHTML = html;
 
+    document.getElementById('nav-perm-save').onclick = async function(){
+      var newPerms = {};
+      NAV.filter(function(n){ return n.id!=='config'; }).forEach(function(n){
+        var roles = [];
+        CONFIGURABLE_ROLES.forEach(function(r){
+          var cb = main.querySelector('[data-nav-perm="' + n.id + '"][data-role="' + r + '"]');
+          if(cb && cb.checked) roles.push(r);
+        });
+        newPerms[n.id] = roles;
+      });
+      var saved = await setData('nav-permissions', newPerms);
+      if(saved){
+        navPermissions = newPerms;
+        logAudit('Ambas as unidades', 'Atualizou acesso por nível', '');
+        showToast('Acessos atualizados.');
+        renderApp();
+      }
+    };
+
     var BACKUP_KEYS = ['motoboys-entries','rates-unidade1','rates-unidade2','motoboy-schedule','motoboy-cadastro',
-      'motoboys-turno-status','caixa-fechamento','caixa-fechamento-status','colaboradores','recipes','processes',
+      'motoboys-turno-status','caixa-fechamento','caixa-fechamento-status','conteudo','nav-permissions','avaliacoes',
       'checklist-status','audit-log','users-list'];
 
     document.getElementById('backup-export').onclick = async function(){
