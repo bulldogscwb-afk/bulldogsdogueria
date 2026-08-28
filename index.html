@@ -1807,13 +1807,31 @@
     return '<datalist id="insumos-suggestions">' + __insumoSuggestions.map(function(n){ return '<option value="' + escapeHtml(n) + '">'; }).join('') + '</datalist>';
   }
 
-  function fichaIngredRowHtml(nome, quantidade, unidade){
-    return '<div class="ingred-row" style="display:flex; gap:6px; margin-bottom:6px; flex-wrap:wrap;">' +
+  function fichaIngredRowHtml(nome, quantidade, unidade, comEscala){
+    var baseAttr = comEscala ? ' data-base-qty="' + escapeHtml(quantidade!=null?String(quantidade):'') + '"' : '';
+    var scaleBtn = comEscala ? '<button type="button" class="btn ingred-scale-btn" style="padding:6px 9px; font-size:11px; white-space:nowrap;" title="Já sei quanto tenho deste — recalcular os outros">Escalar por este</button>' : '';
+    return '<div class="ingred-row"' + baseAttr + ' style="display:flex; gap:6px; margin-bottom:6px; flex-wrap:wrap; align-items:center;">' +
       '<input class="grid-input" style="width:80px;" type="number" step="0.01" min="0" data-fing-field="quantidade" value="' + (quantidade!=null && quantidade!==''? escapeHtml(String(quantidade)) : '') + '" placeholder="Qtd">' +
       '<select class="grid-select" style="width:75px;" data-fing-field="unidade">' + UNIDADES.map(function(u){ return '<option value="' + u + '"' + (u===unidade?' selected':'') + '>' + u + '</option>'; }).join('') + '</select>' +
       '<input class="grid-input wide" style="flex:1; min-width:140px;" type="text" data-fing-field="nome" value="' + escapeHtml(nome||'') + '" placeholder="Nome do insumo, ex: Tomate" list="insumos-suggestions">' +
+      scaleBtn +
       '<button type="button" class="btn ingred-remove-btn" style="padding:6px 9px;">×</button>' +
     '</div>';
+  }
+
+  function parseRendimentoNumero(str){
+    if(!str) return null;
+    var m = String(str).match(/([\d]+(?:[.,]\d+)?)/);
+    if(!m) return null;
+    return parseFloat(m[1].replace(',','.'));
+  }
+
+  function formatarRendimentoEscalado(rendimentoStr, fator){
+    var num = parseRendimentoNumero(rendimentoStr);
+    if(num===null) return null;
+    var sufixo = rendimentoStr.replace(/[\d.,]+/, '').trim();
+    var valor = Math.round(num*fator*100)/100;
+    return {valor: valor, texto: valor + (sufixo ? ' ' + sufixo : '')};
   }
 
   function wireFichaIngredContainer(container){
@@ -1879,7 +1897,8 @@
     html += '<div id="rend-ing-rows"><div class="empty" style="padding:14px;">Escolha uma receita acima pra ver os insumos dela.</div></div>';
     html += '<button type="button" class="btn" id="rend-ing-add" style="margin-top:8px;" disabled>+ Adicionar insumo extra</button>';
     html += insumosDatalistHtml();
-    html += '<div id="rend-custo" style="margin-top:10px; font-size:13px; font-weight:700; color:var(--ink-2);"></div>';
+    html += '<div id="rend-escala-info" style="margin-top:10px; font-size:12.5px; color:var(--muted);"></div>';
+    html += '<div id="rend-custo" style="margin-top:6px; font-size:13px; font-weight:700; color:var(--ink-2);"></div>';
     html += '</div>';
 
     html += '<div class="form-grid" style="grid-template-columns:1fr 1fr; margin-top:16px;">';
@@ -1928,6 +1947,8 @@
     var rowsContainer = document.getElementById('rend-ing-rows');
     var addBtn = document.getElementById('rend-ing-add');
     var custoEl = document.getElementById('rend-custo');
+    var escalaInfoEl = document.getElementById('rend-escala-info');
+    var receitaAtual = null;
 
     function atualizarCustoLote(){
       var ingredientes = readFichaIngredRows(rowsContainer);
@@ -1942,6 +1963,30 @@
         var row = ev.target.closest('.ingred-row');
         if(row) row.remove();
         atualizarCustoLote();
+        return;
+      }
+      if(ev.target.classList.contains('ingred-scale-btn')){
+        var scaleRow = ev.target.closest('.ingred-row');
+        var baseQty = parseFloat(scaleRow.getAttribute('data-base-qty'));
+        var novaQtd = parseFloat(scaleRow.querySelector('[data-fing-field="quantidade"]').value);
+        if(!baseQty || !novaQtd){ showToast('Preencha a quantidade que você tem desse insumo antes de escalar.', 'error'); return; }
+        var fator = novaQtd / baseQty;
+        rowsContainer.querySelectorAll('.ingred-row').forEach(function(r){
+          var b = parseFloat(r.getAttribute('data-base-qty'));
+          if(b){ r.querySelector('[data-fing-field="quantidade"]').value = Math.round(b*fator*100)/100; }
+        });
+        var nomeRef = scaleRow.querySelector('[data-fing-field="nome"]').value;
+        var infoTxt = 'Escalado pela quantidade de "' + nomeRef + '" (' + (Math.round(fator*100)/100) + 'x a receita original).';
+        if(receitaAtual && receitaAtual.rendimento){
+          var rend = formatarRendimentoEscalado(receitaAtual.rendimento, fator);
+          if(rend){
+            infoTxt += ' Rendimento estimado: ' + rend.texto + '.';
+            var totalInput = document.getElementById('rend-total');
+            if(totalInput) totalInput.value = rend.texto;
+          }
+        }
+        escalaInfoEl.textContent = infoTxt;
+        atualizarCustoLote();
       }
     });
     rowsContainer.addEventListener('input', atualizarCustoLote);
@@ -1953,19 +1998,23 @@
 
     document.getElementById('rend-item').addEventListener('change', function(){
       var itemId = this.value;
+      escalaInfoEl.textContent = '';
       if(!itemId){
+        receitaAtual = null;
         rowsContainer.innerHTML = '<div class="empty" style="padding:14px;">Escolha uma receita acima pra ver os insumos dela.</div>';
         addBtn.disabled = true;
         custoEl.textContent = '';
         return;
       }
       var receita = receitas.find(function(r){ return r.id===itemId; });
+      receitaAtual = receita;
       addBtn.disabled = false;
       var ings = (receita.ingredientes && receita.ingredientes.length) ? receita.ingredientes : [];
       if(ings.length===0){
         rowsContainer.innerHTML = '<div class="empty" style="padding:14px;">Essa ficha não tem insumos cadastrados. Adicione manualmente abaixo, ou peça ao Dono pra completar a ficha técnica.</div>';
       } else {
-        rowsContainer.innerHTML = ings.map(function(ing){ return fichaIngredRowHtml(ing.nome, ing.quantidade, ing.unidade); }).join('');
+        rowsContainer.innerHTML = ings.map(function(ing){ return fichaIngredRowHtml(ing.nome, ing.quantidade, ing.unidade, true); }).join('');
+        escalaInfoEl.textContent = 'Já sabe quanto tem de algum insumo (ex: 10kg de músculo)? Ajusta o número dele e clica em "Escalar por este" — os outros se recalculam sozinhos.';
       }
       atualizarCustoLote();
     });
