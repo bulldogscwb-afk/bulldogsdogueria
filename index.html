@@ -1874,12 +1874,12 @@
     html += '</select></div>';
 
     html += '<div style="margin-top:14px;">';
-    html += '<label style="display:block; font-size:11.5px; color:var(--muted); font-weight:600; margin-bottom:6px;">Insumos da receita — preencha do lado a quantidade que foi usada</label>';
+    html += '<div id="rend-escala-box" class="card" style="background:var(--paper); display:none;"></div>';
+    html += '<label style="display:block; font-size:11.5px; color:var(--muted); font-weight:600; margin-top:14px; margin-bottom:6px;">Insumos da receita</label>';
     html += '<div id="rend-ing-rows"><div class="empty" style="padding:14px;">Escolha uma receita acima pra ver os insumos dela.</div></div>';
     html += '<button type="button" class="btn" id="rend-ing-add" style="margin-top:8px;" disabled>+ Adicionar insumo extra</button>';
     html += insumosDatalistHtml();
-    html += '<div id="rend-escala-info" style="margin-top:10px; font-size:12.5px; color:var(--muted);"></div>';
-    html += '<div id="rend-custo" style="margin-top:6px; font-size:13px; font-weight:700; color:var(--ink-2);"></div>';
+    html += '<div id="rend-custo" style="margin-top:10px; font-size:13px; font-weight:700; color:var(--ink-2);"></div>';
     html += '</div>';
 
     html += '<div class="form-grid" style="grid-template-columns:1fr 1fr; margin-top:16px;">';
@@ -1928,8 +1928,9 @@
     var rowsContainer = document.getElementById('rend-ing-rows');
     var addBtn = document.getElementById('rend-ing-add');
     var custoEl = document.getElementById('rend-custo');
-    var escalaInfoEl = document.getElementById('rend-escala-info');
+    var escalaBox = document.getElementById('rend-escala-box');
     var receitaAtual = null;
+    var baseQuantidades = {}; // nome do insumo (minúsculo) -> quantidade teórica da ficha
 
     function atualizarCustoLote(){
       var ingredientes = readFichaIngredRows(rowsContainer);
@@ -1939,34 +1940,56 @@
         (info.faltando>0 ? ' (' + info.faltando + ' insumo(s) sem preço cadastrado)' : '');
     }
 
-    rowsContainer.addEventListener('click', function(ev){
-      if(ev.target.classList.contains('ingred-remove-btn')){
-        var row = ev.target.closest('.ingred-row');
-        if(row) row.remove();
-        atualizarCustoLote();
+    function montarBlocoEscala(receita){
+      if(!receita.ingredientes || receita.ingredientes.length===0){
+        escalaBox.style.display = 'none';
+        escalaBox.innerHTML = '';
         return;
       }
-      if(ev.target.classList.contains('ingred-scale-btn')){
-        var scaleRow = ev.target.closest('.ingred-row');
-        var baseQty = parseFloat(scaleRow.getAttribute('data-base-qty'));
-        var novaQtd = parseFloat(scaleRow.querySelector('[data-fing-field="quantidade"]').value);
-        if(!baseQty || !novaQtd){ showToast('Preencha a quantidade que você tem desse insumo antes de escalar.', 'error'); return; }
+      escalaBox.style.display = 'block';
+      var h = '<div style="font-size:13px; font-weight:600; margin-bottom:4px;">Já sabe quanto tem de algum insumo?</div>';
+      h += '<div style="font-size:12px; color:var(--muted); margin-bottom:12px;">Escolha o insumo e informe a quantidade disponível — o sistema calcula sozinho a quantidade de todos os outros, abaixo.</div>';
+      h += '<div style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end;">';
+      h += '<div class="form-field" style="margin:0; min-width:180px;"><label>Insumo</label><select id="rend-escala-insumo">' +
+        receita.ingredientes.map(function(ing){ return '<option value="' + escapeHtml(ing.nome) + '">' + escapeHtml(ing.nome) + '</option>'; }).join('') + '</select></div>';
+      h += '<div class="form-field" style="margin:0; width:130px;"><label>Quanto você tem</label><input class="grid-input" style="width:100%;" type="number" step="0.01" min="0" id="rend-escala-valor" placeholder="Ex: 10"></div>';
+      h += '<button type="button" class="btn primary" id="rend-escala-calcular">Calcular quantidades</button>';
+      h += '</div>';
+      h += '<div id="rend-escala-resultado" style="margin-top:10px; font-size:12.5px; color:var(--muted);"></div>';
+      escalaBox.innerHTML = h;
+
+      document.getElementById('rend-escala-calcular').onclick = function(){
+        var nomeRef = document.getElementById('rend-escala-insumo').value;
+        var novaQtd = parseFloat(document.getElementById('rend-escala-valor').value);
+        var baseQty = baseQuantidades[nomeRef.trim().toLowerCase()];
+        if(!novaQtd){ showToast('Informe a quantidade que você tem.', 'error'); return; }
+        if(!baseQty){ showToast('Não achei a quantidade base desse insumo na ficha.', 'error'); return; }
         var fator = novaQtd / baseQty;
+
         rowsContainer.querySelectorAll('.ingred-row').forEach(function(r){
-          var b = parseFloat(r.getAttribute('data-base-qty'));
-          if(b){ r.querySelector('[data-fing-field="quantidade"]').value = Math.round(b*fator*100)/100; }
+          var nomeAtual = r.querySelector('[data-fing-field="nome"]').value.trim().toLowerCase();
+          var b = baseQuantidades[nomeAtual];
+          if(b!=null){ r.querySelector('[data-fing-field="quantidade"]').value = Math.round(b*fator*100)/100; }
         });
-        var nomeRef = scaleRow.querySelector('[data-fing-field="nome"]').value;
-        var infoTxt = 'Escalado pela quantidade de "' + nomeRef + '" (' + (Math.round(fator*100)/100) + 'x a receita original).';
+
+        var resultadoTxt = 'Calculado com base em ' + novaQtd + ' de "' + nomeRef + '" (' + (Math.round(fator*100)/100) + 'x a ficha original).';
         if(receitaAtual && receitaAtual.rendimento){
           var rend = formatarRendimentoEscalado(receitaAtual.rendimento, fator);
           if(rend){
-            infoTxt += ' Rendimento estimado: ' + rend.texto + '.';
+            resultadoTxt += ' Rendimento estimado: ' + rend.texto + '.';
             var totalInput = document.getElementById('rend-total');
             if(totalInput) totalInput.value = rend.texto;
           }
         }
-        escalaInfoEl.textContent = infoTxt;
+        document.getElementById('rend-escala-resultado').textContent = resultadoTxt;
+        atualizarCustoLote();
+      };
+    }
+
+    rowsContainer.addEventListener('click', function(ev){
+      if(ev.target.classList.contains('ingred-remove-btn')){
+        var row = ev.target.closest('.ingred-row');
+        if(row) row.remove();
         atualizarCustoLote();
       }
     });
@@ -1979,24 +2002,27 @@
 
     document.getElementById('rend-item').addEventListener('change', function(){
       var itemId = this.value;
-      escalaInfoEl.textContent = '';
       if(!itemId){
         receitaAtual = null;
+        baseQuantidades = {};
         rowsContainer.innerHTML = '<div class="empty" style="padding:14px;">Escolha uma receita acima pra ver os insumos dela.</div>';
         addBtn.disabled = true;
         custoEl.textContent = '';
+        escalaBox.style.display = 'none';
         return;
       }
       var receita = receitas.find(function(r){ return r.id===itemId; });
       receitaAtual = receita;
       addBtn.disabled = false;
       var ings = (receita.ingredientes && receita.ingredientes.length) ? receita.ingredientes : [];
+      baseQuantidades = {};
+      ings.forEach(function(ing){ baseQuantidades[ing.nome.trim().toLowerCase()] = parseFloat(ing.quantidade); });
       if(ings.length===0){
         rowsContainer.innerHTML = '<div class="empty" style="padding:14px;">Essa ficha não tem insumos cadastrados. Adicione manualmente abaixo, ou peça ao Dono pra completar a ficha técnica.</div>';
       } else {
-        rowsContainer.innerHTML = ings.map(function(ing){ return fichaIngredRowHtml(ing.nome, ing.quantidade, ing.unidade, true); }).join('');
-        escalaInfoEl.textContent = 'Já sabe quanto tem de algum insumo (ex: 10kg de músculo)? Ajusta o número dele e clica em "Escalar por este" — os outros se recalculam sozinhos.';
+        rowsContainer.innerHTML = ings.map(function(ing){ return fichaIngredRowHtml(ing.nome, ing.quantidade, ing.unidade); }).join('');
       }
+      montarBlocoEscala(receita);
       atualizarCustoLote();
     });
 
