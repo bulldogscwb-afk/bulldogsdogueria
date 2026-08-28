@@ -1794,14 +1794,22 @@
     return '<datalist id="insumos-suggestions">' + __insumoSuggestions.map(function(n){ return '<option value="' + escapeHtml(n) + '">'; }).join('') + '</datalist>';
   }
 
-  function fichaIngredRowHtml(nome, quantidade, unidade, comEscala){
-    var baseAttr = comEscala ? ' data-base-qty="' + escapeHtml(quantidade!=null?String(quantidade):'') + '"' : '';
-    var scaleBtn = comEscala ? '<button type="button" class="btn ingred-scale-btn" style="padding:6px 9px; font-size:11px; white-space:nowrap;" title="Já sei quanto tenho deste — recalcular os outros">Escalar por este</button>' : '';
-    return '<div class="ingred-row"' + baseAttr + ' style="display:flex; gap:6px; margin-bottom:6px; flex-wrap:wrap; align-items:center;">' +
+  function fichaIngredRowHtml(nome, quantidade, unidade){
+    return '<div class="ingred-row" style="display:flex; gap:6px; margin-bottom:6px; flex-wrap:wrap; align-items:center;">' +
       '<input class="grid-input" style="width:80px;" type="number" step="0.01" min="0" data-fing-field="quantidade" value="' + (quantidade!=null && quantidade!==''? escapeHtml(String(quantidade)) : '') + '" placeholder="Qtd">' +
       '<select class="grid-select" style="width:75px;" data-fing-field="unidade">' + UNIDADES.map(function(u){ return '<option value="' + u + '"' + (u===unidade?' selected':'') + '>' + u + '</option>'; }).join('') + '</select>' +
       '<input class="grid-input wide" style="flex:1; min-width:140px;" type="text" data-fing-field="nome" value="' + escapeHtml(nome||'') + '" placeholder="Nome do insumo, ex: Tomate" list="insumos-suggestions">' +
-      scaleBtn +
+      '<button type="button" class="btn ingred-remove-btn" style="padding:6px 9px;">×</button>' +
+    '</div>';
+  }
+
+  function rendRowTravadaHtml(nome, quantidade, unidade){
+    return '<div class="ingred-row" style="display:flex; gap:8px; margin-bottom:6px; flex-wrap:wrap; align-items:center;">' +
+      '<input class="grid-input" style="width:80px;" type="number" step="0.01" min="0" data-fing-field="quantidade" value="' + (quantidade!=null && quantidade!==''? escapeHtml(String(quantidade)) : '') + '" placeholder="Qtd">' +
+      '<span class="lock-badge" style="min-width:44px; justify-content:center;">' + escapeHtml(unidade||'') + '</span>' +
+      '<input type="hidden" data-fing-field="unidade" value="' + escapeHtml(unidade||'') + '">' +
+      '<span style="flex:1; min-width:140px; font-weight:600; font-size:13px;">' + escapeHtml(nome||'') + '</span>' +
+      '<input type="hidden" data-fing-field="nome" value="' + escapeHtml(nome||'') + '">' +
       '<button type="button" class="btn ingred-remove-btn" style="padding:6px 9px;">×</button>' +
     '</div>';
   }
@@ -1889,25 +1897,9 @@
     html += '<div style="margin-top:16px;"><button class="btn primary" id="rend-save">Salvar rendimento</button></div>';
     html += '</div>';
 
-    var todosRegistros = [];
-    receitas.forEach(function(r){
-      (r.producoes||[]).forEach(function(p){ todosRegistros.push({item:r.titulo, p:p}); });
-    });
-    todosRegistros.sort(function(a,b){ return b.p.data.localeCompare(a.p.data); });
-
     html += '<div class="card">';
-    html += '<div style="font-size:14px; font-weight:600; margin-bottom:10px;">Histórico de rendimentos</div>';
-    if(todosRegistros.length===0){
-      html += '<div class="empty">Nenhum rendimento registrado ainda.</div>';
-    } else {
-      html += '<div class="table-scroll"><table><thead><tr><th>Data</th><th>Item</th><th>Insumos usados</th><th>Rendimento total</th><th>Registrado por</th></tr></thead><tbody>';
-      todosRegistros.slice(0,30).forEach(function(r){
-        var listaIng = (r.p.ingredientes||[]).map(function(ing){ return (ing.quantidade||'') + (ing.unidade||'') + ' ' + ing.nome; }).join(', ');
-        html += '<tr><td class="num-cell">' + r.p.data + '</td><td>' + escapeHtml(r.item) + '</td><td style="color:var(--muted);">' + escapeHtml(listaIng||'—') + '</td>' +
-          '<td class="num-cell" style="font-weight:600;">' + escapeHtml(r.p.rendimentoTotal||'') + '</td><td>' + escapeHtml(r.p.responsavel) + '</td></tr>';
-      });
-      html += '</tbody></table></div>';
-    }
+    html += '<div style="font-size:14px; font-weight:600; margin-bottom:10px;" id="rend-historico-titulo">Histórico de rendimentos</div>';
+    html += '<div id="rend-historico"><div class="empty">Escolha uma receita acima pra ver o histórico dela.</div></div>';
     html += '</div>';
 
     main.innerHTML = html;
@@ -1951,12 +1943,21 @@
       h += '<div style="font-size:12px; color:var(--muted); margin-bottom:12px;">Escolha o insumo e informe a quantidade disponível — o sistema calcula sozinho a quantidade de todos os outros, abaixo.</div>';
       h += '<div style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end;">';
       h += '<div class="form-field" style="margin:0; min-width:180px;"><label>Insumo</label><select id="rend-escala-insumo">' +
-        receita.ingredientes.map(function(ing){ return '<option value="' + escapeHtml(ing.nome) + '">' + escapeHtml(ing.nome) + '</option>'; }).join('') + '</select></div>';
-      h += '<div class="form-field" style="margin:0; width:130px;"><label>Quanto você tem</label><input class="grid-input" style="width:100%;" type="number" step="0.01" min="0" id="rend-escala-valor" placeholder="Ex: 10"></div>';
+        receita.ingredientes.map(function(ing){ return '<option value="' + escapeHtml(ing.nome) + '" data-unidade="' + escapeHtml(ing.unidade||'') + '">' + escapeHtml(ing.nome) + '</option>'; }).join('') + '</select></div>';
+      h += '<div class="form-field" style="margin:0; width:150px;"><label>Quanto você tem</label><div style="display:flex; gap:6px; align-items:center;"><input class="grid-input" style="width:100%;" type="number" step="0.01" min="0" id="rend-escala-valor" placeholder="Ex: 10"><span id="rend-escala-unidade" class="lock-badge" style="white-space:nowrap;"></span></div></div>';
       h += '<button type="button" class="btn primary" id="rend-escala-calcular">Calcular quantidades</button>';
       h += '</div>';
       h += '<div id="rend-escala-resultado" style="margin-top:10px; font-size:12.5px; color:var(--muted);"></div>';
       escalaBox.innerHTML = h;
+
+      var insumoSelect = document.getElementById('rend-escala-insumo');
+      var unidadeSpan = document.getElementById('rend-escala-unidade');
+      function atualizarUnidadeEscala(){
+        var opt = insumoSelect.options[insumoSelect.selectedIndex];
+        unidadeSpan.textContent = opt ? opt.getAttribute('data-unidade') : '';
+      }
+      insumoSelect.addEventListener('change', atualizarUnidadeEscala);
+      atualizarUnidadeEscala();
 
       document.getElementById('rend-escala-calcular').onclick = function(){
         var nomeRef = document.getElementById('rend-escala-insumo').value;
@@ -2000,6 +2001,30 @@
       rowsContainer.appendChild(div.firstElementChild);
     };
 
+    var historicoTituloEl = document.getElementById('rend-historico-titulo');
+    var historicoEl = document.getElementById('rend-historico');
+    function renderHistoricoDaReceita(receita){
+      if(!receita){
+        historicoTituloEl.textContent = 'Histórico de rendimentos';
+        historicoEl.innerHTML = '<div class="empty">Escolha uma receita acima pra ver o histórico dela.</div>';
+        return;
+      }
+      historicoTituloEl.textContent = 'Histórico de rendimentos — ' + receita.titulo;
+      var lista = (receita.producoes || []).slice().sort(function(a,b){ return b.data.localeCompare(a.data); });
+      if(lista.length===0){
+        historicoEl.innerHTML = '<div class="empty">Nenhum rendimento registrado ainda pra essa receita.</div>';
+        return;
+      }
+      var h = '<div class="table-scroll"><table><thead><tr><th>Data</th><th>Insumos usados</th><th>Rendimento total</th><th>Registrado por</th></tr></thead><tbody>';
+      lista.slice(0,30).forEach(function(p){
+        var listaIng = (p.ingredientes||[]).map(function(ing){ return (ing.quantidade||'') + (ing.unidade||'') + ' ' + ing.nome; }).join(', ');
+        h += '<tr><td class="num-cell">' + p.data + '</td><td style="color:var(--muted);">' + escapeHtml(listaIng||'—') + '</td>' +
+          '<td class="num-cell" style="font-weight:600;">' + escapeHtml(p.rendimentoTotal||'') + '</td><td>' + escapeHtml(p.responsavel) + '</td></tr>';
+      });
+      h += '</tbody></table></div>';
+      historicoEl.innerHTML = h;
+    }
+
     document.getElementById('rend-item').addEventListener('change', function(){
       var itemId = this.value;
       if(!itemId){
@@ -2009,6 +2034,7 @@
         addBtn.disabled = true;
         custoEl.textContent = '';
         escalaBox.style.display = 'none';
+        renderHistoricoDaReceita(null);
         return;
       }
       var receita = receitas.find(function(r){ return r.id===itemId; });
@@ -2020,10 +2046,11 @@
       if(ings.length===0){
         rowsContainer.innerHTML = '<div class="empty" style="padding:14px;">Essa ficha não tem insumos cadastrados. Adicione manualmente abaixo, ou peça ao Dono pra completar a ficha técnica.</div>';
       } else {
-        rowsContainer.innerHTML = ings.map(function(ing){ return fichaIngredRowHtml(ing.nome, ing.quantidade, ing.unidade); }).join('');
+        rowsContainer.innerHTML = ings.map(function(ing){ return rendRowTravadaHtml(ing.nome, ing.quantidade, ing.unidade); }).join('');
       }
       montarBlocoEscala(receita);
       atualizarCustoLote();
+      renderHistoricoDaReceita(receita);
     });
 
     document.getElementById('rend-save').onclick = async function(){
