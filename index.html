@@ -1534,10 +1534,11 @@
   }
 
   async function renderConteudo(main){
-    var tab = window.__ctTab || 'fichas';
-    var html = pageHead('Receitas & Processos', 'Fichas técnicas, rotinas e rendimentos, por marca');
+    var tab = window.__ctTab || 'receitas';
+    var html = pageHead('Receitas & Processos', tab==='receitas' ? 'Fichas técnicas por marca' : tab==='processos' ? 'Rotinas e processos por marca' : 'Registre o rendimento de uma produção');
     html += '<div class="unit-toggle" style="margin-bottom:20px; width:fit-content;">';
-    html += '<button data-ct-tab="fichas" class="' + (tab==='fichas'?'active':'') + '">Fichas técnicas</button>';
+    html += '<button data-ct-tab="receitas" class="' + (tab==='receitas'?'active':'') + '">Receitas</button>';
+    html += '<button data-ct-tab="processos" class="' + (tab==='processos'?'active':'') + '">Processos</button>';
     html += '<button data-ct-tab="rendimento" class="' + (tab==='rendimento'?'active':'') + '">Registrar rendimento</button>';
     html += '</div>';
     html += '<div id="ct-tab-content"></div>';
@@ -1549,58 +1550,49 @@
 
     var content = document.getElementById('ct-tab-content');
     if(tab==='rendimento'){ await renderRendimentoTab(content); }
-    else { await renderFichasTab(content); }
+    else { await renderFichasTab(content, tab==='processos' ? 'processo' : 'receita'); }
   }
 
-  async function renderFichasTab(main){
+  async function renderFichasTab(main, tipoFixo){
     var canEdit = user.role==='dono';
     var items = await getConteudo();
     __insumoSuggestions = await coletarNomesInsumos(items);
     __insumoPrecos = await getData('insumos-precos', {});
     var filtroMarca = window.__ctMarca || 'todas';
-    var filtroTipo = window.__ctTipo || 'todos';
     var editingId = window.__ctEditingId || null;
     var editing = editingId ? items.find(function(x){ return x.id===editingId; }) : null;
     var showForm = !!editing || !!window.__ctShowForm;
+    var rotuloTipo = tipoFixo==='receita' ? 'receita' : 'processo';
 
     var html = '';
 
-    html += '<div class="unit-toggle" style="margin-bottom:10px; width:fit-content; flex-wrap:wrap;">';
-    html += '<button data-ct-marca="todas" class="' + (filtroMarca==='todas'?'active':'') + '">Todas as marcas</button>';
-    MARCAS.forEach(function(m){
-      html += '<button data-ct-marca="' + escapeHtml(m) + '" class="' + (filtroMarca===m?'active':'') + '">' + escapeHtml(m) + '</button>';
-    });
-    html += '</div>';
-    html += '<div class="unit-toggle" style="margin-bottom:20px; width:fit-content;">';
-    ['todos','receita','processo'].forEach(function(t){
-      html += '<button data-ct-tipo="' + t + '" class="' + (filtroTipo===t?'active':'') + '">' + (t==='todos'?'Todos':t==='receita'?'Receitas':'Processos') + '</button>';
-    });
-    html += '</div>';
+    html += '<div class="form-field" style="max-width:260px; margin-bottom:20px;"><label>Marca</label><select id="ct-marca-select"><option value="todas"' + (filtroMarca==='todas'?' selected':'') + '>Todas as marcas</option>' +
+      MARCAS.map(function(m){ return '<option value="' + escapeHtml(m) + '"' + (filtroMarca===m?' selected':'') + '>' + escapeHtml(m) + '</option>'; }).join('') + '</select></div>';
 
     if(canEdit){
       if(!showForm){
-        html += '<div style="margin-bottom:20px;"><button class="btn primary" id="ct-show-form"><i class="ti ti-plus" aria-hidden="true"></i> Novo item</button></div>';
+        html += '<div style="margin-bottom:20px;"><button class="btn primary" id="ct-show-form"><i class="ti ti-plus" aria-hidden="true"></i> Novo(a) ' + rotuloTipo + '</button></div>';
       } else {
         html += '<div class="card" style="margin-bottom:20px;">';
-        html += '<div style="font-weight:600; font-size:14px; margin-bottom:14px;">' + (editing ? 'Editando: ' + escapeHtml(editing.titulo) : 'Novo item') + '</div>';
-        html += '<div class="form-grid">';
-        html += '<div class="form-field"><label>Tipo</label><select id="item-tipo"><option value="receita"' + (editing&&editing.tipo==='receita'?' selected':'') + '>Receita</option><option value="processo"' + (editing&&editing.tipo==='processo'?' selected':'') + '>Processo</option></select></div>';
-        html += '<div class="form-field"><label>Marca</label><select id="item-marca"><option value="todas"' + (editing&&editing.marca==='todas'?' selected':'') + '>Todas as marcas</option>' + MARCAS.map(function(m){ return '<option value="' + escapeHtml(m) + '"' + (editing&&editing.marca===m?' selected':'') + '>' + escapeHtml(m) + '</option>'; }).join('') + '</select></div>';
-        html += '</div>';
+        html += '<div style="font-weight:600; font-size:14px; margin-bottom:14px;">' + (editing ? 'Editando: ' + escapeHtml(editing.titulo) : 'Nova(o) ' + rotuloTipo) + '</div>';
+        html += '<div class="form-field" style="max-width:260px;"><label>Marca</label><select id="item-marca"><option value="todas"' + (editing&&editing.marca==='todas'?' selected':'') + '>Todas as marcas</option>' + MARCAS.map(function(m){ return '<option value="' + escapeHtml(m) + '"' + (editing&&editing.marca===m?' selected':'') + '>' + escapeHtml(m) + '</option>'; }).join('') + '</select></div>';
         html += '<div class="form-grid" style="grid-template-columns:1fr; margin-top:14px;">';
         html += formField('text','item-title','Título','Ex: Molho da casa', editing ? editing.titulo : null);
-        var tipoAtual = editing ? editing.tipo : 'receita';
-        html += '<div id="ficha-ingred-section" style="display:' + (tipoAtual==='receita'?'block':'none') + ';">';
-        html += '<label style="display:block; font-size:11.5px; color:var(--muted); font-weight:600; margin-bottom:6px;">Insumos necessários (o que essa receita usa)</label>';
-        html += '<div id="ficha-ingred-rows">';
-        var ingredsIniciais = (editing && editing.ingredientes && editing.ingredientes.length) ? editing.ingredientes : [{}];
-        ingredsIniciais.forEach(function(ing){ html += fichaIngredRowHtml(ing.nome, ing.quantidade, ing.unidade); });
-        html += '</div>';
-        html += '<button type="button" class="btn" id="ficha-ingred-add" style="margin-top:4px;">+ Adicionar insumo</button>';
-        html += insumosDatalistHtml();
-        html += '</div>';
-        html += '<div class="form-field" style="margin-top:14px;"><label for="item-body">Modo de preparo / observações</label><textarea id="item-body" rows="4" style="width:100%; padding:9px; border:1px solid var(--line); border-radius:7px; background:var(--paper);">' + (editing ? escapeHtml(editing.corpo) : '') + '</textarea></div>';
-        html += formField('text','item-rendimento','Rendimento (opcional)','Ex: 6,8kg ou 40 porções', editing ? editing.rendimento : null);
+        if(tipoFixo==='receita'){
+          html += '<div id="ficha-ingred-section">';
+          html += '<label style="display:block; font-size:11.5px; color:var(--muted); font-weight:600; margin-bottom:6px;">Insumos necessários (o que essa receita usa)</label>';
+          html += '<div id="ficha-ingred-rows">';
+          var ingredsIniciais = (editing && editing.ingredientes && editing.ingredientes.length) ? editing.ingredientes : [{}];
+          ingredsIniciais.forEach(function(ing){ html += fichaIngredRowHtml(ing.nome, ing.quantidade, ing.unidade); });
+          html += '</div>';
+          html += '<button type="button" class="btn" id="ficha-ingred-add" style="margin-top:4px;">+ Adicionar insumo</button>';
+          html += insumosDatalistHtml();
+          html += '</div>';
+        }
+        html += '<div class="form-field" style="margin-top:14px;"><label for="item-body">' + (tipoFixo==='receita' ? 'Modo de preparo / observações' : 'Passos / instruções') + '</label><textarea id="item-body" rows="4" style="width:100%; padding:9px; border:1px solid var(--line); border-radius:7px; background:var(--paper);">' + (editing ? escapeHtml(editing.corpo) : '') + '</textarea></div>';
+        if(tipoFixo==='receita'){
+          html += formField('text','item-rendimento','Rendimento (opcional)','Ex: 6,8kg ou 40 porções', editing ? editing.rendimento : null);
+        }
         html += '<div class="form-field"><label for="item-image">Imagem ou PDF (opcional)</label><input type="file" id="item-image" accept="image/*,application/pdf"><div id="item-image-preview" style="margin-top:8px;">' +
           (editing && editing.imagem ? '<img src="' + editing.imagem + '" style="max-width:160px; border-radius:8px;">' : '') +
           (editing && editing.anexoPdf ? '<span style="font-size:12.5px; color:var(--muted);">PDF já anexado — escolha outro arquivo pra substituir.</span>' : '') +
@@ -1615,8 +1607,7 @@
 
     var filtered = items.filter(function(it){
       var okMarca = filtroMarca==='todas' || it.marca===filtroMarca || it.marca==='todas';
-      var okTipo = filtroTipo==='todos' || it.tipo===filtroTipo;
-      return okMarca && okTipo;
+      return okMarca && it.tipo===tipoFixo;
     });
 
     if(filtered.length===0){
@@ -1653,11 +1644,9 @@
 
     main.innerHTML = html;
 
-    main.querySelectorAll('[data-ct-marca]').forEach(function(b){
-      b.onclick = function(){ window.__ctMarca = b.getAttribute('data-ct-marca'); renderFichasTab(main); };
-    });
-    main.querySelectorAll('[data-ct-tipo]').forEach(function(b){
-      b.onclick = function(){ window.__ctTipo = b.getAttribute('data-ct-tipo'); renderFichasTab(main); };
+    document.getElementById('ct-marca-select').addEventListener('change', function(){
+      window.__ctMarca = this.value;
+      renderFichasTab(main, tipoFixo);
     });
     main.querySelectorAll('[data-open-pdf]').forEach(function(b){
       b.onclick = function(){
@@ -1668,27 +1657,26 @@
 
     if(canEdit){
       var showFormBtn = document.getElementById('ct-show-form');
-      if(showFormBtn){ showFormBtn.onclick = function(){ window.__ctShowForm = true; renderFichasTab(main); }; }
+      if(showFormBtn){ showFormBtn.onclick = function(){ window.__ctShowForm = true; renderFichasTab(main, tipoFixo); }; }
 
       var cancelBtn = document.getElementById('item-cancel');
       if(cancelBtn){
-        cancelBtn.onclick = function(){ window.__ctEditingId = null; window.__ctShowForm = false; renderFichasTab(main); };
+        cancelBtn.onclick = function(){ window.__ctEditingId = null; window.__ctShowForm = false; renderFichasTab(main, tipoFixo); };
       }
 
       if(showForm){
         var pendingImage = editing ? (editing.imagem || '') : '';
         var pendingPdf = editing ? (editing.anexoPdf || '') : '';
 
-        var fichaIngredContainer = document.getElementById('ficha-ingred-rows');
-        wireFichaIngredContainer(fichaIngredContainer);
-        document.getElementById('ficha-ingred-add').onclick = function(){
-          var div = document.createElement('div');
-          div.innerHTML = fichaIngredRowHtml();
-          fichaIngredContainer.appendChild(div.firstElementChild);
-        };
-        document.getElementById('item-tipo').addEventListener('change', function(){
-          document.getElementById('ficha-ingred-section').style.display = (this.value==='receita') ? 'block' : 'none';
-        });
+        if(tipoFixo==='receita'){
+          var fichaIngredContainer = document.getElementById('ficha-ingred-rows');
+          wireFichaIngredContainer(fichaIngredContainer);
+          document.getElementById('ficha-ingred-add').onclick = function(){
+            var div = document.createElement('div');
+            div.innerHTML = fichaIngredRowHtml();
+            fichaIngredContainer.appendChild(div.firstElementChild);
+          };
+        }
 
         var imageInput = document.getElementById('item-image');
         imageInput.addEventListener('change', async function(){
@@ -1718,30 +1706,29 @@
         document.getElementById('item-save').onclick = async function(){
           var t = document.getElementById('item-title').value.trim();
           var b = document.getElementById('item-body').value.trim();
-          var tipo = document.getElementById('item-tipo').value;
           var marca = document.getElementById('item-marca').value;
-          var rendimento = document.getElementById('item-rendimento').value.trim();
-          var ingredientes = (tipo==='receita') ? readFichaIngredRows(fichaIngredContainer) : [];
+          var rendimento = tipoFixo==='receita' ? document.getElementById('item-rendimento').value.trim() : '';
+          var ingredientes = (tipoFixo==='receita') ? readFichaIngredRows(fichaIngredContainer) : [];
           if(!t){ showToast('Dê um título ao item.', 'error'); return; }
           var all = await getConteudo();
           if(editing){
             var idx = all.findIndex(function(x){ return x.id===editing.id; });
-            if(idx>-1){ all[idx] = {id:editing.id, tipo:tipo, titulo:t, corpo:b, rendimento:rendimento, ingredientes:ingredientes, marca:marca, imagem:pendingImage, anexoPdf:pendingPdf, producoes:editing.producoes||[]}; }
+            if(idx>-1){ all[idx] = {id:editing.id, tipo:tipoFixo, titulo:t, corpo:b, rendimento:rendimento, ingredientes:ingredientes, marca:marca, imagem:pendingImage, anexoPdf:pendingPdf, producoes:editing.producoes||[]}; }
             var saved1 = await setData('conteudo', all);
-            if(saved1){ logAudit(marca==='todas' ? 'Ambas as unidades' : marca, 'Editou ' + (tipo==='receita'?'receita':'processo'), t); }
+            if(saved1){ logAudit(marca==='todas' ? 'Ambas as unidades' : marca, 'Editou ' + (tipoFixo==='receita'?'receita':'processo'), t); }
           } else {
-            all.push({id:'i'+Date.now(), tipo:tipo, titulo:t, corpo:b, rendimento:rendimento, ingredientes:ingredientes, marca:marca, imagem:pendingImage, anexoPdf:pendingPdf, producoes:[]});
+            all.push({id:'i'+Date.now(), tipo:tipoFixo, titulo:t, corpo:b, rendimento:rendimento, ingredientes:ingredientes, marca:marca, imagem:pendingImage, anexoPdf:pendingPdf, producoes:[]});
             var saved2 = await setData('conteudo', all);
-            if(saved2){ logAudit(marca==='todas' ? 'Ambas as unidades' : marca, 'Adicionou ' + (tipo==='receita'?'receita':'processo'), t); }
+            if(saved2){ logAudit(marca==='todas' ? 'Ambas as unidades' : marca, 'Adicionou ' + (tipoFixo==='receita'?'receita':'processo'), t); }
           }
           window.__ctEditingId = null;
           window.__ctShowForm = false;
-          renderFichasTab(main);
+          renderFichasTab(main, tipoFixo);
         };
       }
 
       main.querySelectorAll('[data-edit-item]').forEach(function(btn){
-        btn.onclick = function(){ window.__ctEditingId = btn.getAttribute('data-edit-item'); window.__ctShowForm = true; renderFichasTab(main); };
+        btn.onclick = function(){ window.__ctEditingId = btn.getAttribute('data-edit-item'); window.__ctShowForm = true; renderFichasTab(main, tipoFixo); };
       });
 
       main.querySelectorAll('[data-remove-item]').forEach(function(btn){
@@ -1753,7 +1740,7 @@
           all = all.filter(function(x){ return x.id!==id; });
           var saved = await setData('conteudo', all);
           if(saved && target){ logAudit(target.marca==='todas' ? 'Ambas as unidades' : target.marca, 'Removeu item', target.titulo); }
-          renderFichasTab(main);
+          renderFichasTab(main, tipoFixo);
         };
       });
     }
@@ -1855,13 +1842,7 @@
     return rows;
   }
 
-  function rendIngredRowHtml(nome, quantidade){
-    return '<div class="rend-ing-row" style="display:flex; gap:6px; margin-bottom:6px; flex-wrap:wrap;">' +
-      '<input class="grid-input" style="width:90px;" type="text" data-rend-field="quantidade" placeholder="Qtd" value="' + escapeHtml(quantidade||'') + '">' +
-      '<input class="grid-input wide" style="flex:1; min-width:140px;" type="text" data-rend-field="nome" placeholder="Nome do ingrediente" value="' + escapeHtml(nome||'') + '">' +
-      '<button type="button" class="btn rend-ing-remove" style="padding:6px 9px;">×</button>' +
-    '</div>';
-  }
+
 
   async function renderRendimentoTab(main){
     var items = await getConteudo();
