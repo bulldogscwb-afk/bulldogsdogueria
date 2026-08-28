@@ -1583,7 +1583,7 @@
           html += '<label style="display:block; font-size:11.5px; color:var(--muted); font-weight:600; margin-bottom:6px;">Insumos necessários (o que essa receita usa)</label>';
           html += '<div id="ficha-ingred-rows">';
           var ingredsIniciais = (editing && editing.ingredientes && editing.ingredientes.length) ? editing.ingredientes : [{}];
-          ingredsIniciais.forEach(function(ing){ html += fichaIngredRowHtml(ing.nome, ing.quantidade, ing.unidade); });
+          ingredsIniciais.forEach(function(ing){ html += fichaIngredRowHtml(ing.nome, ing.quantidade, ing.unidade, ing.quantidadeBruta); });
           html += '</div>';
           html += '<button type="button" class="btn" id="ficha-ingred-add" style="margin-top:4px;">+ Adicionar insumo</button>';
           html += insumosDatalistHtml();
@@ -1628,7 +1628,8 @@
           html += '<div style="margin-top:8px; font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.03em;">Insumos</div>';
           html += '<ul style="margin:4px 0 0 18px; padding:0; font-size:13px; color:var(--ink-2);">';
           it.ingredientes.forEach(function(ing){
-            html += '<li>' + escapeHtml(ing.quantidade||'') + ' ' + escapeHtml(ing.unidade||'') + ' de ' + escapeHtml(ing.nome) + '</li>';
+            html += '<li>' + escapeHtml(ing.quantidade||'') + ' ' + escapeHtml(ing.unidade||'') + ' de ' + escapeHtml(ing.nome) +
+              (ing.quantidadeBruta ? ' <span style="color:var(--muted); font-size:12px;">(compra bruta: ' + escapeHtml(String(ing.quantidadeBruta)) + ' ' + escapeHtml(ing.unidade||'') + ')</span>' : '') + '</li>';
           });
           html += '</ul>';
           var custoInfo = calcularCustoIngredientes(it.ingredientes);
@@ -1768,7 +1769,8 @@
     var total = 0, faltando = 0;
     (ingredientes||[]).forEach(function(ing){
       var info = buscarPrecoInsumo(ing.nome);
-      var qtd = parseFloat(ing.quantidade);
+      var qtdBase = (ing.quantidadeBruta!=null && ing.quantidadeBruta!=='') ? ing.quantidadeBruta : ing.quantidade;
+      var qtd = parseFloat(qtdBase);
       if(!info || !qtd){ faltando++; return; }
       var qtdConvertida = converterQtd(qtd, ing.unidade, info.unidade);
       if(qtdConvertida===null){ faltando++; return; }
@@ -1794,22 +1796,28 @@
     return '<datalist id="insumos-suggestions">' + __insumoSuggestions.map(function(n){ return '<option value="' + escapeHtml(n) + '">'; }).join('') + '</datalist>';
   }
 
-  function fichaIngredRowHtml(nome, quantidade, unidade){
-    return '<div class="ingred-row" style="display:flex; gap:6px; margin-bottom:6px; flex-wrap:wrap; align-items:center;">' +
-      '<input class="grid-input" style="width:80px;" type="number" step="0.01" min="0" data-fing-field="quantidade" value="' + (quantidade!=null && quantidade!==''? escapeHtml(String(quantidade)) : '') + '" placeholder="Qtd">' +
-      '<select class="grid-select" style="width:75px;" data-fing-field="unidade">' + UNIDADES.map(function(u){ return '<option value="' + u + '"' + (u===unidade?' selected':'') + '>' + u + '</option>'; }).join('') + '</select>' +
-      '<input class="grid-input wide" style="flex:1; min-width:140px;" type="text" data-fing-field="nome" value="' + escapeHtml(nome||'') + '" placeholder="Nome do insumo, ex: Tomate" list="insumos-suggestions">' +
-      '<button type="button" class="btn ingred-remove-btn" style="padding:6px 9px;">×</button>' +
+  function fichaIngredRowHtml(nome, quantidade, unidade, quantidadeBruta){
+    return '<div class="ingred-row" style="display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; align-items:flex-end;">' +
+      '<div><label style="display:block; font-size:10px; color:var(--muted); margin-bottom:2px;">Qtd limpa</label><input class="grid-input" style="width:75px;" type="number" step="0.01" min="0" data-fing-field="quantidade" value="' + (quantidade!=null && quantidade!==''? escapeHtml(String(quantidade)) : '') + '" placeholder="Qtd"></div>' +
+      '<div><label style="display:block; font-size:10px; color:var(--muted); margin-bottom:2px;">Unid.</label><select class="grid-select" style="width:75px;" data-fing-field="unidade">' + UNIDADES.map(function(u){ return '<option value="' + u + '"' + (u===unidade?' selected':'') + '>' + u + '</option>'; }).join('') + '</select></div>' +
+      '<div style="flex:1; min-width:140px;"><label style="display:block; font-size:10px; color:var(--muted); margin-bottom:2px;">Nome do insumo</label><input class="grid-input wide" style="width:100%;" type="text" data-fing-field="nome" value="' + escapeHtml(nome||'') + '" placeholder="Ex: Tomate" list="insumos-suggestions"></div>' +
+      '<div><label style="display:block; font-size:10px; color:var(--muted); margin-bottom:2px;" title="Preencha só se esse insumo perde peso no preparo (ex: limpeza, cozimento)">Qtd bruta (opcional)</label><input class="grid-input" style="width:85px;" type="number" step="0.01" min="0" data-fing-field="quantidadeBruta" value="' + (quantidadeBruta!=null && quantidadeBruta!==''? escapeHtml(String(quantidadeBruta)) : '') + '" placeholder="Ex: 6"></div>' +
+      '<button type="button" class="btn ingred-remove-btn" style="padding:8px 9px;">×</button>' +
     '</div>';
   }
 
-  function rendRowTravadaHtml(nome, quantidade, unidade){
-    return '<div class="ingred-row" style="display:flex; gap:8px; margin-bottom:6px; flex-wrap:wrap; align-items:center;">' +
+  function rendRowTravadaHtml(nome, quantidade, unidade, quantidadeBrutaFicha){
+    var temBruto = quantidadeBrutaFicha!=null && quantidadeBrutaFicha!=='';
+    return '<div class="ingred-row" style="display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap; align-items:center;">' +
       '<input class="grid-input" style="width:80px;" type="number" step="0.01" min="0" data-fing-field="quantidade" value="' + (quantidade!=null && quantidade!==''? escapeHtml(String(quantidade)) : '') + '" placeholder="Qtd">' +
       '<span class="lock-badge" style="min-width:44px; justify-content:center;">' + escapeHtml(unidade||'') + '</span>' +
       '<input type="hidden" data-fing-field="unidade" value="' + escapeHtml(unidade||'') + '">' +
-      '<span style="flex:1; min-width:140px; font-weight:600; font-size:13px;">' + escapeHtml(nome||'') + '</span>' +
+      '<span style="flex:1; min-width:140px; font-weight:600; font-size:13px;">' + escapeHtml(nome||'') + ' <span style="font-weight:400; color:var(--muted); font-size:11.5px;">(limpo)</span></span>' +
       '<input type="hidden" data-fing-field="nome" value="' + escapeHtml(nome||'') + '">' +
+      (temBruto ?
+        '<div style="display:flex; align-items:center; gap:5px;"><span style="font-size:11.5px; color:var(--muted); white-space:nowrap;">bruto usado:</span>' +
+        '<input class="grid-input" style="width:75px;" type="number" step="0.01" min="0" data-fing-field="quantidadeBruta" value="' + escapeHtml(String(quantidadeBrutaFicha)) + '" placeholder="Bruto"></div>'
+        : '') +
       '<button type="button" class="btn ingred-remove-btn" style="padding:6px 9px;">×</button>' +
     '</div>';
   }
@@ -1845,7 +1853,9 @@
       var nome = row.querySelector('[data-fing-field="nome"]').value.trim();
       var quantidade = row.querySelector('[data-fing-field="quantidade"]').value;
       var unidade = row.querySelector('[data-fing-field="unidade"]').value;
-      if(nome){ rows.push({nome:nome, quantidade:quantidade, unidade:unidade}); }
+      var brutoEl = row.querySelector('[data-fing-field="quantidadeBruta"]');
+      var quantidadeBruta = brutoEl ? brutoEl.value : '';
+      if(nome){ rows.push({nome:nome, quantidade:quantidade, unidade:unidade, quantidadeBruta:quantidadeBruta}); }
     });
     return rows;
   }
@@ -1923,6 +1933,7 @@
     var escalaBox = document.getElementById('rend-escala-box');
     var receitaAtual = null;
     var baseQuantidades = {}; // nome do insumo (minúsculo) -> quantidade teórica da ficha
+    var baseBrutos = {}; // nome do insumo (minúsculo) -> quantidade bruta teórica da ficha
 
     function atualizarCustoLote(){
       var ingredientes = readFichaIngredRows(rowsContainer);
@@ -1971,6 +1982,9 @@
           var nomeAtual = r.querySelector('[data-fing-field="nome"]').value.trim().toLowerCase();
           var b = baseQuantidades[nomeAtual];
           if(b!=null){ r.querySelector('[data-fing-field="quantidade"]').value = Math.round(b*fator*100)/100; }
+          var brutoEl = r.querySelector('[data-fing-field="quantidadeBruta"]');
+          var bBruto = baseBrutos[nomeAtual];
+          if(brutoEl && bBruto!=null){ brutoEl.value = Math.round(bBruto*fator*100)/100; }
         });
 
         var resultadoTxt = 'Calculado com base em ' + novaQtd + ' de "' + nomeRef + '" (' + (Math.round(fator*100)/100) + 'x a ficha original).';
@@ -2017,7 +2031,11 @@
       }
       var h = '<div class="table-scroll"><table><thead><tr><th>Data</th><th>Insumos usados</th><th>Rendimento total</th><th>Registrado por</th></tr></thead><tbody>';
       lista.slice(0,30).forEach(function(p){
-        var listaIng = (p.ingredientes||[]).map(function(ing){ return (ing.quantidade||'') + (ing.unidade||'') + ' ' + ing.nome; }).join(', ');
+        var listaIng = (p.ingredientes||[]).map(function(ing){
+          var base = (ing.quantidade||'') + (ing.unidade||'') + ' ' + ing.nome;
+          if(ing.quantidadeBruta){ base += ' (bruto: ' + ing.quantidadeBruta + (ing.unidade||'') + ')'; }
+          return base;
+        }).join(', ');
         h += '<tr><td class="num-cell">' + p.data + '</td><td style="color:var(--muted);">' + escapeHtml(listaIng||'—') + '</td>' +
           '<td class="num-cell" style="font-weight:600;">' + escapeHtml(p.rendimentoTotal||'') + '</td><td>' + escapeHtml(p.responsavel) + '</td></tr>';
       });
@@ -2030,6 +2048,7 @@
       if(!itemId){
         receitaAtual = null;
         baseQuantidades = {};
+        baseBrutos = {};
         rowsContainer.innerHTML = '<div class="empty" style="padding:14px;">Escolha uma receita acima pra ver os insumos dela.</div>';
         addBtn.disabled = true;
         custoEl.textContent = '';
@@ -2042,11 +2061,14 @@
       addBtn.disabled = false;
       var ings = (receita.ingredientes && receita.ingredientes.length) ? receita.ingredientes : [];
       baseQuantidades = {};
-      ings.forEach(function(ing){ baseQuantidades[ing.nome.trim().toLowerCase()] = parseFloat(ing.quantidade); });
+      ings.forEach(function(ing){
+        baseQuantidades[ing.nome.trim().toLowerCase()] = parseFloat(ing.quantidade);
+        if(ing.quantidadeBruta!=null && ing.quantidadeBruta!==''){ baseBrutos[ing.nome.trim().toLowerCase()] = parseFloat(ing.quantidadeBruta); }
+      });
       if(ings.length===0){
         rowsContainer.innerHTML = '<div class="empty" style="padding:14px;">Essa ficha não tem insumos cadastrados. Adicione manualmente abaixo, ou peça ao Dono pra completar a ficha técnica.</div>';
       } else {
-        rowsContainer.innerHTML = ings.map(function(ing){ return rendRowTravadaHtml(ing.nome, ing.quantidade, ing.unidade); }).join('');
+        rowsContainer.innerHTML = ings.map(function(ing){ return rendRowTravadaHtml(ing.nome, ing.quantidade, ing.unidade, ing.quantidadeBruta); }).join('');
       }
       montarBlocoEscala(receita);
       atualizarCustoLote();
