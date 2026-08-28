@@ -1555,7 +1555,8 @@
   async function renderFichasTab(main){
     var canEdit = user.role==='dono';
     var items = await getConteudo();
-    __insumoSuggestions = coletarNomesInsumos(items);
+    __insumoSuggestions = await coletarNomesInsumos(items);
+    __insumoPrecos = await getData('insumos-precos', {});
     var filtroMarca = window.__ctMarca || 'todas';
     var filtroTipo = window.__ctTipo || 'todos';
     var editingId = window.__ctEditingId || null;
@@ -1639,6 +1640,9 @@
             html += '<li>' + escapeHtml(ing.quantidade||'') + ' ' + escapeHtml(ing.unidade||'') + ' de ' + escapeHtml(ing.nome) + '</li>';
           });
           html += '</ul>';
+          var custoInfo = calcularCustoIngredientes(it.ingredientes);
+          html += '<div style="margin-top:8px; font-size:13px; font-weight:700; color:var(--ink-2);">Custo estimado da ficha: R$ ' + custoInfo.total.toFixed(2).replace('.',',') +
+            (custoInfo.faltando>0 ? ' <span style="font-weight:500; color:var(--muted); font-size:11.5px;">(' + custoInfo.faltando + ' insumo(s) sem preço cadastrado)</span>' : '') + '</div>';
         }
         if(it.corpo){ html += '<div class="item-body" style="margin-top:8px;">' + escapeHtml(it.corpo) + '</div>'; }
         if(it.imagem){ html += '<img src="' + it.imagem + '" alt="" style="max-width:260px; border-radius:8px; margin-top:10px; display:block;">'; }
@@ -1757,12 +1761,43 @@
 
   var UNIDADES = ['g','kg','ml','l','un','pct'];
   var __insumoSuggestions = [];
+  var __insumoPrecos = {};
 
-  function coletarNomesInsumos(items){
+  function converterQtd(quantidade, unidadeOrigem, unidadeBase){
+    if(!unidadeOrigem || !unidadeBase || unidadeOrigem===unidadeBase) return quantidade;
+    var fatores = {'g_kg':0.001, 'kg_g':1000, 'ml_l':0.001, 'l_ml':1000};
+    var chave = unidadeOrigem + '_' + unidadeBase;
+    if(fatores[chave]!=null) return quantidade * fatores[chave];
+    return null;
+  }
+
+  function buscarPrecoInsumo(nome){
+    if(!nome) return null;
+    var chave = Object.keys(__insumoPrecos).find(function(k){ return k.toLowerCase()===nome.trim().toLowerCase(); });
+    return chave ? __insumoPrecos[chave] : null;
+  }
+
+  function calcularCustoIngredientes(ingredientes){
+    var total = 0, faltando = 0;
+    (ingredientes||[]).forEach(function(ing){
+      var info = buscarPrecoInsumo(ing.nome);
+      var qtd = parseFloat(ing.quantidade);
+      if(!info || !qtd){ faltando++; return; }
+      var qtdConvertida = converterQtd(qtd, ing.unidade, info.unidade);
+      if(qtdConvertida===null){ faltando++; return; }
+      total += qtdConvertida * info.preco;
+    });
+    return {total: total, faltando: faltando};
+  }
+
+
+  async function coletarNomesInsumos(items){
     var set = {};
     items.forEach(function(it){
       (it.ingredientes||[]).forEach(function(ing){ if(ing.nome) set[ing.nome.trim()] = true; });
     });
+    var importados = await getData('insumos-nomes', []);
+    importados.forEach(function(n){ if(n) set[String(n).trim()] = true; });
     return Object.keys(set).sort(function(a,b){ return a.localeCompare(b); });
   }
 
@@ -1810,7 +1845,8 @@
 
   async function renderRendimentoTab(main){
     var items = await getConteudo();
-    __insumoSuggestions = coletarNomesInsumos(items);
+    __insumoSuggestions = await coletarNomesInsumos(items);
+    __insumoPrecos = await getData('insumos-precos', {});
     var receitas = items.filter(function(it){ return it.tipo==='receita'; });
 
     var html = '<div class="card" style="margin-bottom:20px; padding:22px;">';
@@ -1841,6 +1877,7 @@
     html += '<div id="rend-ing-rows"><div class="empty" style="padding:14px;">Escolha uma receita acima pra ver os insumos dela.</div></div>';
     html += '<button type="button" class="btn" id="rend-ing-add" style="margin-top:8px;" disabled>+ Adicionar insumo extra</button>';
     html += insumosDatalistHtml();
+    html += '<div id="rend-custo" style="margin-top:10px; font-size:13px; font-weight:700; color:var(--ink-2);"></div>';
     html += '</div>';
 
     html += '<div class="form-grid" style="grid-template-columns:1fr 1fr; margin-top:16px;">';
@@ -1888,13 +1925,24 @@
 
     var rowsContainer = document.getElementById('rend-ing-rows');
     var addBtn = document.getElementById('rend-ing-add');
+    var custoEl = document.getElementById('rend-custo');
+
+    function atualizarCustoLote(){
+      var ingredientes = readFichaIngredRows(rowsContainer);
+      if(ingredientes.length===0){ custoEl.textContent = ''; return; }
+      var info = calcularCustoIngredientes(ingredientes);
+      custoEl.textContent = 'Custo estimado deste lote: R$ ' + info.total.toFixed(2).replace('.',',') +
+        (info.faltando>0 ? ' (' + info.faltando + ' insumo(s) sem preço cadastrado)' : '');
+    }
 
     rowsContainer.addEventListener('click', function(ev){
       if(ev.target.classList.contains('ingred-remove-btn')){
         var row = ev.target.closest('.ingred-row');
         if(row) row.remove();
+        atualizarCustoLote();
       }
     });
+    rowsContainer.addEventListener('input', atualizarCustoLote);
     addBtn.onclick = function(){
       var div = document.createElement('div');
       div.innerHTML = fichaIngredRowHtml();
@@ -1906,6 +1954,7 @@
       if(!itemId){
         rowsContainer.innerHTML = '<div class="empty" style="padding:14px;">Escolha uma receita acima pra ver os insumos dela.</div>';
         addBtn.disabled = true;
+        custoEl.textContent = '';
         return;
       }
       var receita = receitas.find(function(r){ return r.id===itemId; });
@@ -1916,6 +1965,7 @@
       } else {
         rowsContainer.innerHTML = ings.map(function(ing){ return fichaIngredRowHtml(ing.nome, ing.quantidade, ing.unidade); }).join('');
       }
+      atualizarCustoLote();
     });
 
     document.getElementById('rend-save').onclick = async function(){
@@ -2203,9 +2253,11 @@
     html += '<div class="grid-2">';
 
     var ratesByUnit = await Promise.all(UNITS.map(function(u){ return getData('rates-' + u.id, DEFAULT_RATES); }));
-    var cfgLoaded = await Promise.all([getData('motoboy-cadastro', []), getData('colaboradores-avaliacao', [])]);
+    var cfgLoaded = await Promise.all([getData('motoboy-cadastro', []), getData('colaboradores-avaliacao', []), getData('insumos-precos', {}), getConteudo()]);
     var motoboyCadastro = cfgLoaded[0].filter(function(m){ return m.ativo!==false; });
     var colabAvaliacao = cfgLoaded[1].filter(function(c){ return c.ativo!==false; });
+    var precosAtuais = cfgLoaded[2];
+    var nomesInsumos = await coletarNomesInsumos(cfgLoaded[3]);
 
     for(var i=0;i<UNITS.length;i++){
       var u = UNITS[i];
@@ -2269,6 +2321,25 @@
     html += '<select class="grid-select" id="colab-cad-unit">' + UNITS.map(function(u2){ return '<option value="' + u2.id + '">' + u2.label + '</option>'; }).join('') + '</select>';
     html += '<button class="btn primary" id="colab-cad-add">Cadastrar colaborador</button>';
     html += '</div>';
+    html += '</div>';
+
+    html += '<div style="height:16px"></div>';
+    html += '<div class="card">';
+    html += '<div style="font-weight:600; font-size:14px;">Preços dos insumos</div>';
+    html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Usado pra calcular o custo estimado de cada ficha técnica e de cada lote registrado. Preencha o preço e a unidade a que ele se refere (ex: preço por kg).</div>';
+    if(nomesInsumos.length===0){
+      html += '<div class="empty">Nenhum insumo conhecido ainda — use um insumo numa receita ou importe uma lista pelo Backup.</div>';
+    } else {
+      html += '<div class="table-scroll" style="margin-top:10px;"><table><thead><tr><th>Insumo</th><th>Preço (R$)</th><th>Unidade do preço</th></tr></thead><tbody>';
+      nomesInsumos.forEach(function(nome){
+        var info = precosAtuais[nome] || {};
+        html += '<tr><td>' + escapeHtml(nome) + '</td>' +
+          '<td><input class="grid-input money" type="number" step="0.0001" min="0" data-preco-nome="' + escapeHtml(nome) + '" value="' + (info.preco!=null ? info.preco : '') + '"></td>' +
+          '<td><select class="grid-select" data-preco-unidade="' + escapeHtml(nome) + '">' + UNIDADES.map(function(u){ return '<option value="' + u + '"' + (u===info.unidade?' selected':'') + '>' + u + '</option>'; }).join('') + '</select></td></tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    html += '<div style="margin-top:14px;"><button class="btn primary" id="precos-save">Salvar preços</button></div>';
     html += '</div>';
 
     var CONFIGURABLE_ROLES = ['gerente','supervisor','equipe','caixa'];
@@ -2354,6 +2425,25 @@
       renderConfig(main);
     };
 
+    var precosSaveBtn = document.getElementById('precos-save');
+    if(precosSaveBtn){
+      precosSaveBtn.onclick = async function(){
+        var novosPrecos = {};
+        nomesInsumos.forEach(function(nome){
+          var precoInput = main.querySelector('[data-preco-nome="' + nome.replace(/"/g,'&quot;') + '"]');
+          var unidadeInput = main.querySelector('[data-preco-unidade="' + nome.replace(/"/g,'&quot;') + '"]');
+          var preco = precoInput ? parseFloat(precoInput.value) : NaN;
+          if(!isNaN(preco) && preco>0){
+            novosPrecos[nome] = {preco: preco, unidade: unidadeInput ? unidadeInput.value : 'un'};
+          }
+        });
+        var saved = await setData('insumos-precos', novosPrecos);
+        if(saved){ logAudit('Ambas as unidades', 'Atualizou preços de insumos', Object.keys(novosPrecos).length + ' insumo(s)'); }
+        showToast('Preços salvos.');
+        renderConfig(main);
+      };
+    }
+
     document.getElementById('nav-perm-save').onclick = async function(){
       var newPerms = {};
       NAV.filter(function(n){ return n.id!=='config'; }).forEach(function(n){
@@ -2375,7 +2465,7 @@
 
     var BACKUP_KEYS = ['motoboys-entries','rates-unidade1','rates-unidade2','motoboy-schedule','motoboy-cadastro',
       'motoboys-turno-status','caixa-fechamento','caixa-fechamento-status','conteudo','nav-permissions','avaliacoes',
-      'colaboradores-avaliacao','insumos-cadastro','checklist-status','audit-log','users-list'];
+      'colaboradores-avaliacao','insumos-cadastro','insumos-nomes','insumos-precos','checklist-status','audit-log','users-list'];
 
     document.getElementById('backup-export').onclick = async function(){
       var values = await Promise.all(BACKUP_KEYS.map(function(k){ return getData(k, null); }));
