@@ -2258,6 +2258,8 @@
     var colabAvaliacao = cfgLoaded[1].filter(function(c){ return c.ativo!==false; });
     var precosAtuais = cfgLoaded[2];
     var nomesInsumos = await coletarNomesInsumos(cfgLoaded[3]);
+    Object.keys(precosAtuais).forEach(function(n){ if(nomesInsumos.indexOf(n)===-1) nomesInsumos.push(n); });
+    nomesInsumos.sort(function(a,b){ return a.localeCompare(b); });
 
     for(var i=0;i<UNITS.length;i++){
       var u = UNITS[i];
