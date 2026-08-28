@@ -1759,6 +1759,19 @@
     return null;
   }
 
+  function calcularPesoTotalKg(ingredientes){
+    var total = 0, algum = false, ignorados = 0;
+    (ingredientes||[]).forEach(function(ing){
+      var qtd = parseFloat(ing.quantidade);
+      if(!qtd) return;
+      var emKg = converterQtd(qtd, ing.unidade, 'kg');
+      if(emKg===null){ ignorados++; return; }
+      total += emKg;
+      algum = true;
+    });
+    return algum ? {total: total, ignorados: ignorados} : null;
+  }
+
   function buscarPrecoInsumo(nome){
     if(!nome) return null;
     var chave = Object.keys(__insumoPrecos).find(function(k){ return k.toLowerCase()===nome.trim().toLowerCase(); });
@@ -1891,6 +1904,8 @@
     receitas.forEach(function(r){ html += '<option value="' + r.id + '">' + escapeHtml(r.titulo) + '</option>'; });
     html += '</select></div>';
 
+    html += '<div id="rend-preparo-box" style="display:none;" class="card"></div>';
+
     html += '<div style="margin-top:14px;">';
     html += '<div id="rend-escala-box" class="card" style="background:var(--paper); display:none;"></div>';
     html += '<label style="display:block; font-size:11.5px; color:var(--muted); font-weight:600; margin-top:14px; margin-bottom:6px;">Insumos da receita</label>';
@@ -1898,6 +1913,7 @@
     html += '<button type="button" class="btn" id="rend-ing-add" style="margin-top:8px;" disabled>+ Adicionar insumo extra</button>';
     html += insumosDatalistHtml();
     html += '<div id="rend-custo" style="margin-top:10px; font-size:13px; font-weight:700; color:var(--ink-2);"></div>';
+    html += '<div id="rend-indice" style="margin-top:4px; font-size:13px; font-weight:700; color:var(--ink-2);"></div>';
     html += '</div>';
 
     html += '<div class="form-grid" style="grid-template-columns:1fr 1fr; margin-top:16px;">';
@@ -1930,17 +1946,32 @@
     var rowsContainer = document.getElementById('rend-ing-rows');
     var addBtn = document.getElementById('rend-ing-add');
     var custoEl = document.getElementById('rend-custo');
+    var indiceEl = document.getElementById('rend-indice');
     var escalaBox = document.getElementById('rend-escala-box');
+    var preparoBox = document.getElementById('rend-preparo-box');
     var receitaAtual = null;
     var baseQuantidades = {}; // nome do insumo (minúsculo) -> quantidade teórica da ficha
     var baseBrutos = {}; // nome do insumo (minúsculo) -> quantidade bruta teórica da ficha
 
     function atualizarCustoLote(){
       var ingredientes = readFichaIngredRows(rowsContainer);
-      if(ingredientes.length===0){ custoEl.textContent = ''; return; }
+      if(ingredientes.length===0){ custoEl.textContent = ''; indiceEl.textContent = ''; return; }
       var info = calcularCustoIngredientes(ingredientes);
       custoEl.textContent = 'Custo estimado deste lote: R$ ' + info.total.toFixed(2).replace('.',',') +
         (info.faltando>0 ? ' (' + info.faltando + ' insumo(s) sem preço cadastrado)' : '');
+
+      var peso = calcularPesoTotalKg(ingredientes);
+      var totalInput = document.getElementById('rend-total');
+      var pesoFinal = totalInput ? parseRendimentoNumero(totalInput.value) : null;
+      if(peso && pesoFinal){
+        var indicePct = (pesoFinal / peso.total) * 100;
+        indiceEl.textContent = 'Peso total dos insumos: ' + (Math.round(peso.total*1000)/1000) + ' kg · Índice de rendimento: ' + (Math.round(indicePct*10)/10) + '%' +
+          (peso.ignorados>0 ? ' (não conta insumos medidos em unidade/pacote)' : '');
+      } else if(peso){
+        indiceEl.textContent = 'Peso total dos insumos: ' + (Math.round(peso.total*1000)/1000) + ' kg — preencha o rendimento total pra ver o índice de rendimento.';
+      } else {
+        indiceEl.textContent = '';
+      }
     }
 
     function montarBlocoEscala(receita){
@@ -2052,13 +2083,21 @@
         rowsContainer.innerHTML = '<div class="empty" style="padding:14px;">Escolha uma receita acima pra ver os insumos dela.</div>';
         addBtn.disabled = true;
         custoEl.textContent = '';
+        indiceEl.textContent = '';
         escalaBox.style.display = 'none';
+        preparoBox.style.display = 'none';
         renderHistoricoDaReceita(null);
         return;
       }
       var receita = receitas.find(function(r){ return r.id===itemId; });
       receitaAtual = receita;
       addBtn.disabled = false;
+      if(receita.corpo){
+        preparoBox.style.display = 'block';
+        preparoBox.innerHTML = '<div style="font-weight:600; font-size:13px; margin-bottom:6px;">Modo de preparo</div><div style="font-size:13px; color:var(--ink-2); white-space:pre-wrap;">' + escapeHtml(receita.corpo) + '</div>';
+      } else {
+        preparoBox.style.display = 'none';
+      }
       var ings = (receita.ingredientes && receita.ingredientes.length) ? receita.ingredientes : [];
       baseQuantidades = {};
       ings.forEach(function(ing){
@@ -2074,6 +2113,8 @@
       atualizarCustoLote();
       renderHistoricoDaReceita(receita);
     });
+
+    document.getElementById('rend-total').addEventListener('input', atualizarCustoLote);
 
     document.getElementById('rend-save').onclick = async function(){
       var itemId = document.getElementById('rend-item').value;
