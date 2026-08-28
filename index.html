@@ -198,6 +198,10 @@
   .confirm-box{background:var(--card); border-radius:12px; padding:22px; max-width:380px; width:100%; box-shadow:0 10px 30px rgba(0,0,0,.25);}
   .confirm-msg{font-size:14px; color:var(--ink); line-height:1.6; margin-bottom:18px;}
   .confirm-actions{display:flex; justify-content:flex-end; gap:8px;}
+
+  .form-modal-overlay{position:fixed; inset:0; background:rgba(35,32,29,0.55); z-index:9500; padding:24px 16px; overflow-y:auto;}
+  .form-modal-box{background:var(--card); border-radius:12px; padding:24px; max-width:640px; width:100%; margin:0 auto; box-shadow:0 12px 34px rgba(0,0,0,.3);}
+  .form-modal-close{position:sticky; top:0; display:flex; justify-content:flex-end; margin-bottom:-8px;}
 </style>
 </head>
 <body>
@@ -1559,6 +1563,7 @@
     __insumoSuggestions = await coletarNomesInsumos(items);
     __insumoPrecos = await getData('insumos-precos', {});
     var filtroMarca = window.__ctMarca || 'todas';
+    var busca = window.__ctBusca || '';
     var editingId = window.__ctEditingId || null;
     var editing = editingId ? items.find(function(x){ return x.id===editingId; }) : null;
     var showForm = !!editing || !!window.__ctShowForm;
@@ -1566,52 +1571,56 @@
 
     var html = '';
 
-    html += '<div class="form-field" style="max-width:260px; margin-bottom:20px;"><label>Marca</label><select id="ct-marca-select"><option value="todas"' + (filtroMarca==='todas'?' selected':'') + '>Todas as marcas</option>' +
+    html += '<div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; margin-bottom:20px;">';
+    html += '<div class="form-field" style="max-width:260px; margin:0;"><label>Marca</label><select id="ct-marca-select"><option value="todas"' + (filtroMarca==='todas'?' selected':'') + '>Todas as marcas</option>' +
       MARCAS.map(function(m){ return '<option value="' + escapeHtml(m) + '"' + (filtroMarca===m?' selected':'') + '>' + escapeHtml(m) + '</option>'; }).join('') + '</select></div>';
-
+    html += '<div class="form-field" style="max-width:280px; flex:1; min-width:200px; margin:0;"><label>Buscar por nome</label><input class="grid-input wide" style="width:100%;" type="text" id="ct-busca" placeholder="Ex: molho, frango…" value="' + escapeHtml(busca) + '"></div>';
     if(canEdit){
-      if(!showForm){
-        html += '<div style="margin-bottom:20px;"><button class="btn primary" id="ct-show-form"><i class="ti ti-plus" aria-hidden="true"></i> Novo(a) ' + rotuloTipo + '</button></div>';
-      } else {
-        html += '<div class="card" style="margin-bottom:20px;">';
-        html += '<div style="font-weight:600; font-size:14px; margin-bottom:14px;">' + (editing ? 'Editando: ' + escapeHtml(editing.titulo) : 'Nova(o) ' + rotuloTipo) + '</div>';
-        html += '<div class="form-field" style="max-width:260px;"><label>Marca</label><select id="item-marca"><option value="todas"' + (editing&&editing.marca==='todas'?' selected':'') + '>Todas as marcas</option>' + MARCAS.map(function(m){ return '<option value="' + escapeHtml(m) + '"' + (editing&&editing.marca===m?' selected':'') + '>' + escapeHtml(m) + '</option>'; }).join('') + '</select></div>';
-        html += '<div class="form-grid" style="grid-template-columns:1fr; margin-top:14px;">';
-        html += formField('text','item-title','Título','Ex: Molho da casa', editing ? editing.titulo : null);
-        if(tipoFixo==='receita'){
-          html += '<div id="ficha-ingred-section">';
-          html += '<label style="display:block; font-size:11.5px; color:var(--muted); font-weight:600; margin-bottom:6px;">Insumos necessários (o que essa receita usa)</label>';
-          html += '<div id="ficha-ingred-rows">';
-          var ingredsIniciais = (editing && editing.ingredientes && editing.ingredientes.length) ? editing.ingredientes : [{}];
-          ingredsIniciais.forEach(function(ing){ html += fichaIngredRowHtml(ing.nome, ing.quantidade, ing.unidade, ing.quantidadeBruta); });
-          html += '</div>';
-          html += '<button type="button" class="btn" id="ficha-ingred-add" style="margin-top:4px;">+ Adicionar insumo</button>';
-          html += insumosDatalistHtml();
-          html += '</div>';
-        }
-        html += '<div class="form-field" style="margin-top:14px;"><label for="item-body">' + (tipoFixo==='receita' ? 'Modo de preparo / observações' : 'Passos / instruções') + '</label><textarea id="item-body" rows="4" style="width:100%; padding:9px; border:1px solid var(--line); border-radius:7px; background:var(--paper);">' + (editing ? escapeHtml(editing.corpo) : '') + '</textarea></div>';
-        if(tipoFixo==='receita'){
-          html += formField('text','item-rendimento','Rendimento (opcional)','Ex: 6,8kg ou 40 porções', editing ? editing.rendimento : null);
-        }
-        html += '<div class="form-field"><label for="item-image">Imagem ou PDF (opcional)</label><input type="file" id="item-image" accept="image/*,application/pdf"><div id="item-image-preview" style="margin-top:8px;">' +
-          (editing && editing.imagem ? '<img src="' + editing.imagem + '" style="max-width:160px; border-radius:8px;">' : '') +
-          (editing && editing.anexoPdf ? '<span style="font-size:12.5px; color:var(--muted);">PDF já anexado — escolha outro arquivo pra substituir.</span>' : '') +
-          '</div></div>';
+      html += '<button class="btn primary" id="ct-show-form" style="height:38px;"><i class="ti ti-plus" aria-hidden="true"></i> Novo(a) ' + rotuloTipo + '</button>';
+    }
+    html += '</div>';
+
+    if(canEdit && showForm){
+      html += '<div class="form-modal-overlay" id="ct-form-overlay"><div class="form-modal-box">';
+      html += '<div class="form-modal-close"><button class="btn" id="item-cancel-x" style="padding:6px 10px;">✕</button></div>';
+      html += '<div style="font-weight:600; font-size:14px; margin-bottom:14px;">' + (editing ? 'Editando: ' + escapeHtml(editing.titulo) : 'Nova(o) ' + rotuloTipo) + '</div>';
+      html += '<div class="form-field" style="max-width:260px;"><label>Marca</label><select id="item-marca"><option value="todas"' + (editing&&editing.marca==='todas'?' selected':'') + '>Todas as marcas</option>' + MARCAS.map(function(m){ return '<option value="' + escapeHtml(m) + '"' + (editing&&editing.marca===m?' selected':'') + '>' + escapeHtml(m) + '</option>'; }).join('') + '</select></div>';
+      html += '<div class="form-grid" style="grid-template-columns:1fr; margin-top:14px;">';
+      html += formField('text','item-title','Título','Ex: Molho da casa', editing ? editing.titulo : null);
+      if(tipoFixo==='receita'){
+        html += '<div id="ficha-ingred-section">';
+        html += '<label style="display:block; font-size:11.5px; color:var(--muted); font-weight:600; margin-bottom:6px;">Insumos necessários (o que essa receita usa)</label>';
+        html += '<div id="ficha-ingred-rows">';
+        var ingredsIniciais = (editing && editing.ingredientes && editing.ingredientes.length) ? editing.ingredientes : [{}];
+        ingredsIniciais.forEach(function(ing){ html += fichaIngredRowHtml(ing.nome, ing.quantidade, ing.unidade, ing.quantidadeBruta); });
         html += '</div>';
-        html += '<div style="margin-top:16px; display:flex; gap:10px;"><button class="btn primary" id="item-save">' + (editing ? 'Salvar edição' : 'Adicionar') + '</button>';
-        html += '<button class="btn" id="item-cancel">Cancelar</button>';
-        html += '</div>';
+        html += '<button type="button" class="btn" id="ficha-ingred-add" style="margin-top:4px;">+ Adicionar insumo</button>';
+        html += insumosDatalistHtml();
         html += '</div>';
       }
+      html += '<div class="form-field" style="margin-top:14px;"><label for="item-body">' + (tipoFixo==='receita' ? 'Modo de preparo / observações' : 'Passos / instruções') + '</label><textarea id="item-body" rows="4" style="width:100%; padding:9px; border:1px solid var(--line); border-radius:7px; background:var(--paper);">' + (editing ? escapeHtml(editing.corpo) : '') + '</textarea></div>';
+      if(tipoFixo==='receita'){
+        html += formField('text','item-rendimento','Rendimento (opcional)','Ex: 6,8kg ou 40 porções', editing ? editing.rendimento : null);
+      }
+      html += '<div class="form-field"><label for="item-image">Imagem ou PDF (opcional)</label><input type="file" id="item-image" accept="image/*,application/pdf"><div id="item-image-preview" style="margin-top:8px;">' +
+        (editing && editing.imagem ? '<img src="' + editing.imagem + '" style="max-width:160px; border-radius:8px;">' : '') +
+        (editing && editing.anexoPdf ? '<span style="font-size:12.5px; color:var(--muted);">PDF já anexado — escolha outro arquivo pra substituir.</span>' : '') +
+        '</div></div>';
+      html += '</div>';
+      html += '<div style="margin-top:16px; display:flex; gap:10px;"><button class="btn primary" id="item-save">' + (editing ? 'Salvar edição' : 'Adicionar') + '</button>';
+      html += '<button class="btn" id="item-cancel">Cancelar</button>';
+      html += '</div>';
+      html += '</div></div>';
     }
 
     var filtered = items.filter(function(it){
       var okMarca = filtroMarca==='todas' || it.marca===filtroMarca || it.marca==='todas';
-      return okMarca && it.tipo===tipoFixo;
+      var okBusca = !busca || it.titulo.toLowerCase().indexOf(busca.toLowerCase())!==-1;
+      return okMarca && okBusca && it.tipo===tipoFixo;
     });
 
     if(filtered.length===0){
-      html += '<div class="card"><div class="empty">Nada cadastrado ainda com esse filtro.</div></div>';
+      html += '<div class="card"><div class="empty">Nada encontrado com esse filtro.</div></div>';
     } else {
       filtered.slice().reverse().forEach(function(it){
         html += '<div class="card" style="margin-bottom:14px;">';
@@ -1649,6 +1658,11 @@
       window.__ctMarca = this.value;
       renderFichasTab(main, tipoFixo);
     });
+    var buscaInput = document.getElementById('ct-busca');
+    buscaInput.addEventListener('change', function(){
+      window.__ctBusca = this.value;
+      renderFichasTab(main, tipoFixo);
+    });
     main.querySelectorAll('[data-open-pdf]').forEach(function(b){
       b.onclick = function(){
         var it = items.find(function(x){ return x.id===b.getAttribute('data-open-pdf'); });
@@ -1660,9 +1674,14 @@
       var showFormBtn = document.getElementById('ct-show-form');
       if(showFormBtn){ showFormBtn.onclick = function(){ window.__ctShowForm = true; renderFichasTab(main, tipoFixo); }; }
 
+      function fecharModalItem(){ window.__ctEditingId = null; window.__ctShowForm = false; renderFichasTab(main, tipoFixo); }
       var cancelBtn = document.getElementById('item-cancel');
-      if(cancelBtn){
-        cancelBtn.onclick = function(){ window.__ctEditingId = null; window.__ctShowForm = false; renderFichasTab(main, tipoFixo); };
+      if(cancelBtn){ cancelBtn.onclick = fecharModalItem; }
+      var cancelXBtn = document.getElementById('item-cancel-x');
+      if(cancelXBtn){ cancelXBtn.onclick = fecharModalItem; }
+      var formOverlay = document.getElementById('ct-form-overlay');
+      if(formOverlay){
+        formOverlay.addEventListener('click', function(ev){ if(ev.target===formOverlay) fecharModalItem(); });
       }
 
       if(showForm){
@@ -2477,11 +2496,17 @@
     html += '<div class="card">';
     html += '<div style="font-weight:600; font-size:14px;">Preços dos insumos</div>';
     html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Usado pra calcular o custo estimado de cada ficha técnica e de cada lote registrado. Preencha o preço e a unidade a que ele se refere (ex: preço por kg).</div>';
+    var buscaInsumo = window.__cfgBuscaInsumo || '';
+    html += '<input class="grid-input wide" style="width:100%; max-width:320px; margin-top:12px;" type="text" id="cfg-busca-insumo" placeholder="Buscar insumo pelo nome…" value="' + escapeHtml(buscaInsumo) + '">';
+    var nomesFiltrados = nomesInsumos.filter(function(n){ return !buscaInsumo || n.toLowerCase().indexOf(buscaInsumo.toLowerCase())!==-1; });
     if(nomesInsumos.length===0){
       html += '<div class="empty">Nenhum insumo conhecido ainda — use um insumo numa receita ou importe uma lista pelo Backup.</div>';
+    } else if(nomesFiltrados.length===0){
+      html += '<div class="empty">Nenhum insumo encontrado com esse nome.</div>';
     } else {
-      html += '<div class="table-scroll" style="margin-top:10px;"><table><thead><tr><th>Insumo</th><th>Preço (R$)</th><th>Unidade do preço</th></tr></thead><tbody>';
-      nomesInsumos.forEach(function(nome){
+      html += '<div style="font-size:11px; color:var(--muted); margin-top:8px;">Mostrando ' + nomesFiltrados.length + ' de ' + nomesInsumos.length + '</div>';
+      html += '<div class="table-scroll" style="margin-top:6px;"><table><thead><tr><th>Insumo</th><th>Preço (R$)</th><th>Unidade do preço</th></tr></thead><tbody>';
+      nomesFiltrados.forEach(function(nome){
         var info = precosAtuais[nome] || {};
         html += '<tr><td>' + escapeHtml(nome) + '</td>' +
           '<td><input class="grid-input money" type="number" step="0.0001" min="0" data-preco-nome="' + escapeHtml(nome) + '" value="' + (info.preco!=null ? info.preco : '') + '"></td>' +
@@ -2578,13 +2603,16 @@
     var precosSaveBtn = document.getElementById('precos-save');
     if(precosSaveBtn){
       precosSaveBtn.onclick = async function(){
-        var novosPrecos = {};
+        var novosPrecos = Object.assign({}, precosAtuais);
         nomesInsumos.forEach(function(nome){
           var precoInput = main.querySelector('[data-preco-nome="' + nome.replace(/"/g,'&quot;') + '"]');
+          if(!precoInput) return; // não estava visível (filtro de busca) — mantém o valor já salvo
           var unidadeInput = main.querySelector('[data-preco-unidade="' + nome.replace(/"/g,'&quot;') + '"]');
-          var preco = precoInput ? parseFloat(precoInput.value) : NaN;
+          var preco = parseFloat(precoInput.value);
           if(!isNaN(preco) && preco>0){
             novosPrecos[nome] = {preco: preco, unidade: unidadeInput ? unidadeInput.value : 'un'};
+          } else {
+            delete novosPrecos[nome];
           }
         });
         var saved = await setData('insumos-precos', novosPrecos);
@@ -2592,6 +2620,13 @@
         showToast('Preços salvos.');
         renderConfig(main);
       };
+    }
+    var cfgBuscaInput = document.getElementById('cfg-busca-insumo');
+    if(cfgBuscaInput){
+      cfgBuscaInput.addEventListener('change', function(){
+        window.__cfgBuscaInsumo = this.value;
+        renderConfig(main);
+      });
     }
 
     document.getElementById('nav-perm-save').onclick = async function(){
