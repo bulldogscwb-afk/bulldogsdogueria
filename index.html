@@ -693,12 +693,16 @@
       var tabs = '<div class="unit-toggle" style="margin-bottom:14px; width:fit-content;">' +
         '<button id="mb-tab-report" class="' + (mode==='report'?'active':'') + '">Fechamento semanal</button>' +
         '<button id="mb-tab-daily" class="' + (mode==='daily'?'active':'') + '">Conferir lançamento diário</button>' +
+        '<button id="mb-tab-cadastro" class="' + (mode==='cadastro'?'active':'') + '">Motoboys cadastrados</button>' +
         '</div>';
       main.innerHTML = tabs + '<div id="mb-tab-content"></div>';
       document.getElementById('mb-tab-report').onclick = function(){ window.__mrMode = 'report'; renderMotoboys(main); };
       document.getElementById('mb-tab-daily').onclick = function(){ window.__mrMode = 'daily'; renderMotoboys(main); };
+      document.getElementById('mb-tab-cadastro').onclick = function(){ window.__mrMode = 'cadastro'; renderMotoboys(main); };
       var content = document.getElementById('mb-tab-content');
-      if(mode==='daily'){ await renderMotoboysDaily(content); } else { await renderMotoboysReport(content); }
+      if(mode==='daily'){ await renderMotoboysDaily(content); }
+      else if(mode==='cadastro'){ await renderMotoboysCadastro(content); }
+      else { await renderMotoboysReport(content); }
     } else {
       await renderMotoboysDaily(main);
     }
@@ -740,9 +744,15 @@
     var locked = !!(turnoStatus && turnoStatus.closed);
     var readOnly = locked && !isManagerRole;
 
-    // Auto-provisiona uma linha para cada motoboy escalado neste dia da semana + turno
+    // Auto-provisiona uma linha para cada motoboy escalado neste dia da semana + turno,
+    // menos quem foi explicitamente removido do lançamento de hoje (substituição)
+    var removidosHoje = (await getData('motoboys-turno-removidos', []))
+      .filter(function(r){ return r.unit===viewUnit && r.date===viewDate && r.turno===viewTurno; })
+      .map(function(r){ return r.nome.trim().toLowerCase(); });
+
     var dirty = false;
     schedule.forEach(function(s){
+      if(removidosHoje.indexOf(s.nome.trim().toLowerCase())!==-1) return;
       var exists = allEntries.some(function(e){
         return e.unit===viewUnit && e.date===viewDate && e.turno===viewTurno && e.nome.trim().toLowerCase()===s.nome.trim().toLowerCase();
       });
@@ -798,7 +808,7 @@
     html += '</div>';
 
     html += '<div style="overflow-x:auto; margin-top:14px;"><table class="grid-table"><thead><tr>' +
-      '<th>Motoboy</th><th>Origem</th><th>Dog</th><th>Dell</th><th>Rt.dog</th><th>Rt.dell</th><th>Produtos R$</th><th>Dinheiro R$</th><th>Gorjeta R$</th><th>Total a receber</th></tr></thead><tbody id="mb-tbody">';
+      '<th>Motoboy</th><th>Origem</th><th>Dog</th><th>Dell</th><th>Rt.dog</th><th>Rt.dell</th><th>Produtos R$</th><th>Dinheiro R$</th><th>Gorjeta R$</th><th>Total a receber</th><th></th></tr></thead><tbody id="mb-tbody">';
 
     rows.forEach(function(e){ html += motoboyRowHtml(e, money(calcTotal(e, rates)), readOnly); });
     html += '</tbody></table></div>';
@@ -814,7 +824,7 @@
     if(!readOnly){
       html += '<div class="add-row-bar">';
       if(cadastro.length===0){
-        html += '<span style="font-size:12px; color:var(--muted);">Nenhum motoboy cadastrado ainda — peça ao Dono para cadastrar em Configurações → Cadastro de motoboys.</span>';
+        html += '<span style="font-size:12px; color:var(--muted);">Nenhum motoboy cadastrado ainda — peça ao Dono/Gerente para cadastrar em Motoboys → Motoboys cadastrados.</span>';
       } else {
         html += '<select class="grid-select" style="width:200px;" id="mb-new-nome"><option value="">Selecionar motoboy extra…</option>';
         cadastro.forEach(function(m){ html += '<option value="' + escapeHtml(m.nome) + '">' + escapeHtml(m.nome) + '</option>'; });
@@ -904,6 +914,25 @@
     }
     if(!readOnly){ main.querySelectorAll('#mb-tbody tr').forEach(wireRow); }
 
+    main.querySelectorAll('[data-remove-mb-row]').forEach(function(btn){
+      btn.onclick = async function(){
+        var id = btn.getAttribute('data-remove-mb-row');
+        var all = await getData('motoboys-entries', []);
+        var target = all.find(function(x){ return x.id===id; });
+        if(!target) return;
+        if(!(await showConfirm('Remover ' + target.nome + ' do lançamento de hoje? Use quando ele não veio e mandou outra pessoa no lugar.', 'Remover'))) return;
+        all = all.filter(function(x){ return x.id!==id; });
+        var saved = await setData('motoboys-entries', all);
+        if(saved){
+          var removidos = await getData('motoboys-turno-removidos', []);
+          removidos.push({unit:viewUnit, date:viewDate, turno:viewTurno, nome:target.nome});
+          await setData('motoboys-turno-removidos', removidos);
+          logAudit(viewUnit, 'Removeu motoboy do lançamento do dia', target.nome + ' · ' + turnoLabel(viewTurno) + ' · ' + viewDate);
+        }
+        renderMotoboysDaily(main);
+      };
+    });
+
     var addBtn = document.getElementById('mb-add-row');
     if(addBtn){
       addBtn.onclick = async function(){
@@ -919,6 +948,97 @@
     }
   }
 
+
+  // ============ CADASTRO DE MOTOBOYS (dono/gerente) ============
+  async function renderMotoboysCadastro(main){
+    var cadastro = await getData('motoboy-cadastro', []);
+    var ativos = cadastro.filter(function(m){ return m.ativo!==false; });
+    var busca = window.__mcBusca || '';
+    var editandoId = window.__mcEditandoId || null;
+    var editando = editandoId ? ativos.find(function(m){ return m.id===editandoId; }) : null;
+
+    var html = pageHead('Motoboys cadastrados', 'Nome e chave pix de cada entregador — usado na escala e no lançamento diário');
+
+    html += '<div class="card" style="margin-bottom:16px;">';
+    html += '<div style="font-weight:600; font-size:14px; margin-bottom:12px;">' + (editando ? 'Editando: ' + escapeHtml(editando.nome) : 'Novo motoboy') + '</div>';
+    html += '<div class="add-row-bar">';
+    html += '<input class="grid-input wide" type="text" id="mc-nome" placeholder="Nome do motoboy" value="' + (editando ? escapeHtml(editando.nome) : '') + '">';
+    html += '<input class="grid-input wide" type="text" id="mc-pix" placeholder="Chave pix" value="' + (editando ? escapeHtml(editando.pix||'') : '') + '">';
+    html += '<button class="btn primary" id="mc-save">' + (editando ? 'Salvar edição' : 'Cadastrar motoboy') + '</button>';
+    if(editando){ html += '<button class="btn" id="mc-cancel">Cancelar</button>'; }
+    html += '</div></div>';
+
+    html += '<input class="grid-input wide" style="width:100%; max-width:300px; margin-bottom:12px;" type="text" id="mc-busca" placeholder="Buscar pelo nome…" value="' + escapeHtml(busca) + '">';
+
+    var filtrados = ativos.filter(function(m){ return !busca || m.nome.toLowerCase().indexOf(busca.toLowerCase())!==-1; });
+
+    html += '<div class="card">';
+    if(ativos.length===0){
+      html += '<div class="empty">Nenhum motoboy cadastrado ainda.</div>';
+    } else if(filtrados.length===0){
+      html += '<div class="empty">Nenhum motoboy encontrado com esse nome.</div>';
+    } else {
+      html += '<table><thead><tr><th>Nome</th><th>Pix</th><th></th></tr></thead><tbody>';
+      filtrados.forEach(function(m){
+        html += '<tr><td>' + escapeHtml(m.nome) + '</td><td class="num-cell">' + escapeHtml(m.pix||'—') + '</td>' +
+          '<td><button class="btn" data-mc-edit="' + m.id + '" style="padding:4px 9px; font-size:11.5px;">Editar</button> ' +
+          '<button class="btn" data-mc-remove="' + m.id + '" style="padding:4px 9px; font-size:11.5px;">Remover</button></td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div>';
+
+    main.innerHTML = html;
+
+    document.getElementById('mc-busca').addEventListener('change', function(){
+      window.__mcBusca = this.value;
+      renderMotoboysCadastro(main);
+    });
+
+    document.getElementById('mc-save').onclick = async function(){
+      var nome = document.getElementById('mc-nome').value.trim();
+      var pix = document.getElementById('mc-pix').value.trim();
+      if(!nome){ showToast('Informe o nome do motoboy.', 'error'); return; }
+      var all = await getData('motoboy-cadastro', []);
+      if(editando){
+        var idx = all.findIndex(function(m){ return m.id===editando.id; });
+        if(idx>-1){ all[idx].nome = nome; all[idx].pix = pix; }
+        var saved1 = await setData('motoboy-cadastro', all);
+        if(saved1){ logAudit('Ambas as unidades', 'Editou motoboy cadastrado', nome); }
+      } else {
+        var dup = all.some(function(m){ return m.ativo!==false && m.nome.trim().toLowerCase()===nome.toLowerCase(); });
+        if(dup){ showToast('Já existe um motoboy cadastrado com esse nome.', 'error'); return; }
+        all.push({id:'m'+Date.now(), nome:nome, pix:pix, ativo:true});
+        var saved2 = await setData('motoboy-cadastro', all);
+        if(saved2){ logAudit('Ambas as unidades', 'Cadastrou motoboy', nome + (pix ? ' · pix ' + pix : '')); }
+      }
+      window.__mcEditandoId = null;
+      renderMotoboysCadastro(main);
+    };
+
+    var cancelBtn = document.getElementById('mc-cancel');
+    if(cancelBtn){ cancelBtn.onclick = function(){ window.__mcEditandoId = null; renderMotoboysCadastro(main); }; }
+
+    main.querySelectorAll('[data-mc-edit]').forEach(function(btn){
+      btn.onclick = function(){ window.__mcEditandoId = btn.getAttribute('data-mc-edit'); renderMotoboysCadastro(main); };
+    });
+
+    main.querySelectorAll('[data-mc-remove]').forEach(function(btn){
+      btn.onclick = async function(){
+        if(!(await showConfirm('Remover este motoboy do cadastro? Ele some das opções da escala, mas os lançamentos já feitos continuam no histórico.', 'Remover'))) return;
+        var id = btn.getAttribute('data-mc-remove');
+        var all = await getData('motoboy-cadastro', []);
+        var idx = all.findIndex(function(m){ return m.id===id; });
+        if(idx>-1){
+          var nome = all[idx].nome;
+          all[idx].ativo = false;
+          var saved = await setData('motoboy-cadastro', all);
+          if(saved){ logAudit('Ambas as unidades', 'Removeu motoboy do cadastro', nome); }
+        }
+        renderMotoboysCadastro(main);
+      };
+    });
+  }
 
   // ============ RELATÓRIO SEMANAL DE MOTOBOYS (dono/gerente) ============
   async function renderMotoboysReport(main){
@@ -1023,27 +1143,25 @@
     html += '</div>';
 
     var escNames = schedule.filter(function(s){ return s.weekday===escDia && s.turno===escTurno; });
+    var escNomesSet = {};
+    escNames.forEach(function(s){ escNomesSet[s.nome.trim().toLowerCase()] = s.id; });
+
     html += '<div style="margin-top:18px; padding:16px; border:1px solid var(--line); border-radius:10px; background:var(--paper);">';
-    html += '<div style="font-weight:600; font-size:13.5px; margin-bottom:12px;">Quem trabalha ' + turnoLabel(escTurno) + ' na ' + weekdayLabel(escDia) + '</div>';
-    html += '<div class="sched-chips" style="margin-bottom:14px; min-height:28px;">';
-    if(escNames.length===0){
-      html += '<span style="font-size:12.5px; color:var(--muted);">Ninguém adicionado ainda para este turno/dia.</span>';
-    } else {
-      escNames.forEach(function(s){
-        html += '<span class="chip" style="font-size:12.5px; padding:5px 10px;">' + escapeHtml(s.nome) + '<button data-remove-sched="' + s.id + '" aria-label="Remover">×</button></span>';
-      });
-    }
-    html += '</div>';
-    html += '<div style="display:flex; gap:8px; flex-wrap:wrap;">';
+    html += '<div style="font-weight:600; font-size:13.5px; margin-bottom:4px;">Quem trabalha ' + turnoLabel(escTurno) + ' na ' + weekdayLabel(escDia) + '</div>';
+    html += '<div style="font-size:11.5px; color:var(--muted); margin-bottom:12px;">Marque quem está escalado — desmarcar tira da escala na hora.</div>';
     if(cadastroAtivos.length===0){
-      html += '<span style="font-size:12.5px; color:var(--muted);">Cadastre um motoboy em Configurações primeiro para poder escalá-lo.</span>';
+      html += '<span style="font-size:12.5px; color:var(--muted);">Cadastre um motoboy em Motoboys → Motoboys cadastrados primeiro para poder escalá-lo.</span>';
     } else {
-      html += '<select class="grid-select" style="width:220px;" id="esc-new-nome"><option value="">Selecionar motoboy…</option>';
-      cadastroAtivos.forEach(function(m){ html += '<option value="' + escapeHtml(m.nome) + '">' + escapeHtml(m.nome) + '</option>'; });
-      html += '</select>';
-      html += '<button class="btn primary" id="esc-add-btn">Adicionar à escala</button>';
+      html += '<div style="display:flex; flex-direction:column; gap:8px;">';
+      cadastroAtivos.forEach(function(m){
+        var marcado = escNomesSet.hasOwnProperty(m.nome.trim().toLowerCase());
+        html += '<label style="display:flex; align-items:center; gap:8px; font-size:13px; cursor:pointer;">' +
+          '<input type="checkbox" data-esc-check="' + escapeHtml(m.nome) + '"' + (marcado?' checked':'') + ' style="width:16px; height:16px;">' +
+          escapeHtml(m.nome) +
+        '</label>';
+      });
+      html += '</div>';
     }
-    html += '</div>';
     html += '</div>';
 
     html += '<div style="margin-top:20px; font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.03em;">Resumo da semana</div>';
@@ -1087,33 +1205,32 @@
       };
     });
 
-    async function addToSchedule(weekday, turno, nome){
-      nome = (nome||'').trim();
-      if(!nome){ showToast('Selecione o motoboy antes de adicionar.', 'error'); return; }
-      var all = await getData('motoboy-schedule', []);
-      var dup = all.some(function(s){
-        return s.unit===viewUnit && s.weekday===weekday && s.turno===turno && s.nome.trim().toLowerCase()===nome.toLowerCase();
+    main.querySelectorAll('[data-esc-check]').forEach(function(chk){
+      chk.addEventListener('change', async function(){
+        var nome = chk.getAttribute('data-esc-check');
+        var all = await getData('motoboy-schedule', []);
+        if(chk.checked){
+          var dup = all.some(function(s){
+            return s.unit===viewUnit && s.weekday===escDia && s.turno===escTurno && s.nome.trim().toLowerCase()===nome.trim().toLowerCase();
+          });
+          if(!dup){
+            all.push({id:'s'+Date.now()+Math.random().toString(16).slice(2), unit:viewUnit, weekday:escDia, turno:escTurno, nome:nome});
+            var saved1 = await setData('motoboy-schedule', all);
+            if(saved1){ logAudit(viewUnit, 'Adicionou à escala', nome + ' · ' + weekdayLabel(escDia) + ' · ' + turnoLabel(escTurno)); }
+          }
+        } else {
+          var idx = all.findIndex(function(s){
+            return s.unit===viewUnit && s.weekday===escDia && s.turno===escTurno && s.nome.trim().toLowerCase()===nome.trim().toLowerCase();
+          });
+          if(idx>-1){
+            all.splice(idx,1);
+            var saved2 = await setData('motoboy-schedule', all);
+            if(saved2){ logAudit(viewUnit, 'Removeu da escala', nome + ' · ' + weekdayLabel(escDia) + ' · ' + turnoLabel(escTurno)); }
+          }
+        }
+        renderMotoboysReport(main);
       });
-      if(dup){ renderMotoboysReport(main); return; }
-      all.push({id:'s'+Date.now()+Math.random().toString(16).slice(2), unit:viewUnit, weekday:weekday, turno:turno, nome:nome});
-      var saved = await setData('motoboy-schedule', all);
-      if(!saved) return;
-      logAudit(viewUnit, 'Adicionou à escala', nome + ' · ' + weekdayLabel(weekday) + ' · ' + turnoLabel(turno));
-      renderMotoboysReport(main);
-    }
-
-    var escInput = document.getElementById('esc-new-nome');
-    if(escInput){
-      escInput.addEventListener('keydown', function(ev){
-        if(ev.key!=='Enter') return;
-        ev.preventDefault();
-        addToSchedule(escDia, escTurno, escInput.value);
-      });
-    }
-    var escBtn = document.getElementById('esc-add-btn');
-    if(escBtn){
-      escBtn.onclick = function(){ addToSchedule(escDia, escTurno, document.getElementById('esc-new-nome').value); };
-    }
+    });
   }
 
   function motoboyRowHtml(e, totalDisplay, readOnly){
@@ -1132,6 +1249,7 @@
       '<td><input class="grid-input money" type="number" min="0" step="0.01" data-field="dinheiro" value="' + (e.dinheiro||0) + '"' + dis + '></td>' +
       '<td><input class="grid-input money" type="number" min="0" step="0.01" data-field="gorjeta" value="' + (e.gorjeta||0) + '"' + dis + '></td>' +
       '<td class="total-cell">' + (totalDisplay||'—') + '</td>' +
+      '<td>' + (readOnly ? '' : '<button type="button" class="btn" data-remove-mb-row="' + e.id + '" style="padding:6px 9px; font-size:11.5px;" title="Remover — ele não veio hoje">×</button>') + '</td>' +
     '</tr>';
   }
 
@@ -2452,27 +2570,6 @@
 
     html += '<div style="height:16px"></div>';
     html += '<div class="card">';
-    html += '<div style="font-weight:600; font-size:14px;">Cadastro de motoboys</div>';
-    html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Nomes que aparecem na escala e no lançamento diário de Motoboys.</div>';
-    if(motoboyCadastro.length===0){
-      html += '<div class="empty">Nenhum motoboy cadastrado ainda.</div>';
-    } else {
-      html += '<table style="margin-top:10px;"><thead><tr><th>Nome</th><th>Pix</th><th></th></tr></thead><tbody>';
-      motoboyCadastro.forEach(function(m){
-        html += '<tr><td>' + escapeHtml(m.nome) + '</td><td class="num-cell">' + escapeHtml(m.pix||'—') + '</td>' +
-          '<td><button class="btn" data-remove-moto-cad="' + m.id + '">Remover</button></td></tr>';
-      });
-      html += '</tbody></table>';
-    }
-    html += '<div class="add-row-bar">';
-    html += '<input class="grid-input wide" type="text" id="moto-cad-nome" placeholder="Nome do motoboy">';
-    html += '<input class="grid-input wide" type="text" id="moto-cad-pix" placeholder="Chave pix">';
-    html += '<button class="btn primary" id="moto-cad-add">Cadastrar motoboy</button>';
-    html += '</div>';
-    html += '</div>';
-
-    html += '<div style="height:16px"></div>';
-    html += '<div class="card">';
     html += '<div style="font-weight:600; font-size:14px;">Cadastro de colaboradores (Equipe/Caixa)</div>';
     html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Nomes que aparecem pro Supervisor avaliar. Não precisa de login — é só o nome, por unidade.</div>';
     if(colabAvaliacao.length===0){
@@ -2545,33 +2642,6 @@
     html += '</div>';
 
     main.innerHTML = html;
-
-    main.querySelectorAll('[data-remove-moto-cad]').forEach(function(btn){
-      btn.onclick = async function(){
-        if(!(await showConfirm('Remover este motoboy do cadastro? Ele some das opções da escala, mas os lançamentos já feitos continuam no histórico.', 'Remover'))) return;
-        var id = btn.getAttribute('data-remove-moto-cad');
-        var all = await getData('motoboy-cadastro', []);
-        var idx = all.findIndex(function(m){ return m.id===id; });
-        if(idx>-1){
-          var nome = all[idx].nome;
-          all[idx].ativo = false;
-          var saved = await setData('motoboy-cadastro', all);
-          if(saved){ logAudit('Ambas as unidades', 'Removeu motoboy do cadastro', nome); }
-        }
-        renderConfig(main);
-      };
-    });
-
-    document.getElementById('moto-cad-add').onclick = async function(){
-      var nome = document.getElementById('moto-cad-nome').value.trim();
-      var pix = document.getElementById('moto-cad-pix').value.trim();
-      if(!nome){ showToast('Informe o nome do motoboy.', 'error'); return; }
-      var all = await getData('motoboy-cadastro', []);
-      all.push({id:'m'+Date.now(), nome:nome, pix:pix, ativo:true});
-      var saved = await setData('motoboy-cadastro', all);
-      if(saved){ logAudit('Ambas as unidades', 'Cadastrou motoboy', nome + (pix ? ' · pix ' + pix : '')); }
-      renderConfig(main);
-    };
 
     main.querySelectorAll('[data-remove-colab-cad]').forEach(function(btn){
       btn.onclick = async function(){
@@ -2649,7 +2719,7 @@
     };
 
     var BACKUP_KEYS = ['motoboys-entries','rates-unidade1','rates-unidade2','motoboy-schedule','motoboy-cadastro',
-      'motoboys-turno-status','caixa-fechamento','caixa-fechamento-status','conteudo','nav-permissions','avaliacoes',
+      'motoboys-turno-status','motoboys-turno-removidos','caixa-fechamento','caixa-fechamento-status','conteudo','nav-permissions','avaliacoes',
       'colaboradores-avaliacao','insumos-cadastro','insumos-nomes','insumos-precos','checklist-status','audit-log','users-list'];
 
     document.getElementById('backup-export').onclick = async function(){
