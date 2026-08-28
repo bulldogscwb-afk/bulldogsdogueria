@@ -67,6 +67,7 @@ Siga a ordem abaixo. Nenhum passo exige saber programar.
 1. Entre no repositório que você já criou no GitHub.
 2. Clique em **Add file** → **Upload files**.
 3. Arraste **todos os arquivos** desta pasta (`index.html`, `schema.sql`,
+   `manifest.json`, `sw.js`, `icon-192.png`, `icon-512.png`, `logo-bulldogs.png`,
    `manifest.json`, `sw.js`, `icon-192.png`, `icon-512.png`, `README.md`)
    para a janela do navegador — todos precisam estar na mesma pasta do
    repositório para o app funcionar e ser instalável.
@@ -123,6 +124,43 @@ de verdade, permanentemente, no seu banco de dados.
 
 Depois disso, um ícone do painel aparece na tela inicial do celular,
 abrindo em tela cheia, sem barra de navegador — como um app de verdade.
+
+---
+
+## 8. Conectar ao Google Drive (aba Documentos)
+
+1. Entre em **console.cloud.google.com** e crie um projeto novo (nome
+   sugerido: `central-gestao`).
+2. No menu lateral (☰), vá em **APIs e serviços** → **Biblioteca**, busque
+   por **Google Drive API** e clique em **Ativar**.
+3. Vá em **APIs e serviços** → **Tela de consentimento OAuth**:
+   - Tipo de usuário: **Externo**
+   - Nome do app: `Central de gestão`, seu e-mail de suporte
+   - Em "Escopos", adicione `.../auth/drive.readonly`
+   - Em "Usuários de teste", adicione o e-mail Google de cada pessoa que
+     vai acessar (dono, gerente) — sem isso, essas contas não conseguem
+     conectar
+4. Vá em **APIs e serviços** → **Credenciais** → **Criar credenciais** →
+   **ID do cliente OAuth**:
+   - Tipo de aplicativo: **Aplicativo da Web**
+   - Em "Origens JavaScript autorizadas", adicione o endereço do seu site
+     (ex: `https://seu-site.netlify.app`) — se tiver domínio próprio,
+     adiciona os dois
+   - Clique em **Criar** e copie o **Client ID** (termina com
+     `.apps.googleusercontent.com`)
+5. Abra o `index.html`, busque por `COLE_AQUI_O_CLIENT_ID_DO_GOOGLE` e
+   substitua pelo Client ID copiado.
+6. (Opcional) Se quiser trocar a pasta padrão que abre na aba Documentos,
+   busque por `DEFAULT_DRIVE_FOLDER_ID` e troque pelo ID da sua pasta — é
+   o trecho do link da pasta depois de `/folders/`.
+7. Salve, suba de novo no GitHub.
+
+**Sobre a tela de aviso do Google**: na primeira vez que cada pessoa
+clicar em "Conectar ao Google Drive", o Google mostra uma tela dizendo
+"app não verificado" — isso é normal para apps pequenos de uso interno
+(o seu time é bem menor que o limite de 100 contas que exige verificação
+oficial). É só clicar em **Avançar** → **Acessar Central de gestão (não
+seguro)** — apesar do aviso, é o seu próprio app, criado por você.
 
 ---
 
