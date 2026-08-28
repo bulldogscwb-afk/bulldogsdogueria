@@ -1798,6 +1798,8 @@
     });
     var importados = await getData('insumos-nomes', []);
     importados.forEach(function(n){ if(n) set[String(n).trim()] = true; });
+    var precos = await getData('insumos-precos', {});
+    Object.keys(precos).forEach(function(n){ if(n) set[n.trim()] = true; });
     return Object.keys(set).sort(function(a,b){ return a.localeCompare(b); });
   }
 
@@ -2502,12 +2504,55 @@
         var data = parsed.data || parsed;
         var keysFound = Object.keys(data).filter(function(k){ return BACKUP_KEYS.indexOf(k)!==-1; });
         if(keysFound.length===0){ showToast('Arquivo inválido: nenhum dado reconhecido.', 'error'); return; }
-        if(!(await showConfirm('Importar este backup vai substituir os dados atuais de ' + keysFound.length + ' área(s) do sistema. Continuar?', 'Importar'))) return;
+        var MERGE_KEYS = ['conteudo','insumos-precos','insumos-nomes','motoboy-cadastro'];
+        var temMerge = keysFound.some(function(k){ return MERGE_KEYS.indexOf(k)!==-1; });
+        var msg = 'Importar este arquivo vai atualizar ' + keysFound.length + ' área(s) do sistema.' +
+          (temMerge ? ' Receitas e insumos são mesclados pelo nome (atualiza quem já existe, adiciona quem é novo, nada é apagado).' : ' Isso substitui os dados atuais dessas áreas.') +
+          ' Continuar?';
+        if(!(await showConfirm(msg, 'Importar'))) return;
+
         for(var i=0;i<keysFound.length;i++){
-          await setData(keysFound[i], data[keysFound[i]]);
+          var key = keysFound[i];
+          if(key==='conteudo'){
+            var existing = await getData('conteudo', []);
+            var incoming = data[key] || [];
+            incoming.forEach(function(novoItem){
+              var idx = existing.findIndex(function(e){ return e.titulo && novoItem.titulo && e.titulo.trim().toLowerCase()===novoItem.titulo.trim().toLowerCase(); });
+              if(idx>-1){
+                existing[idx] = Object.assign({}, existing[idx], {
+                  tipo: novoItem.tipo || existing[idx].tipo,
+                  corpo: novoItem.corpo || existing[idx].corpo,
+                  rendimento: novoItem.rendimento || existing[idx].rendimento,
+                  ingredientes: (novoItem.ingredientes && novoItem.ingredientes.length) ? novoItem.ingredientes : existing[idx].ingredientes,
+                  marca: novoItem.marca || existing[idx].marca
+                });
+              } else {
+                existing.push(Object.assign({id:'i'+Date.now()+Math.random().toString(16).slice(2), imagem:'', anexoPdf:'', producoes:[]}, novoItem));
+              }
+            });
+            await setData('conteudo', existing);
+          } else if(key==='insumos-precos'){
+            var existingPrecos = await getData('insumos-precos', {});
+            Object.assign(existingPrecos, data[key] || {});
+            await setData('insumos-precos', existingPrecos);
+          } else if(key==='insumos-nomes'){
+            var existingNomes = await getData('insumos-nomes', []);
+            (data[key]||[]).forEach(function(n){ if(existingNomes.indexOf(n)===-1) existingNomes.push(n); });
+            await setData('insumos-nomes', existingNomes);
+          } else if(key==='motoboy-cadastro'){
+            var existingMoto = await getData('motoboy-cadastro', []);
+            (data[key]||[]).forEach(function(novoM){
+              var idx2 = existingMoto.findIndex(function(m){ return m.nome && novoM.nome && m.nome.trim().toLowerCase()===novoM.nome.trim().toLowerCase(); });
+              if(idx2>-1){ existingMoto[idx2] = Object.assign({}, existingMoto[idx2], novoM); }
+              else { existingMoto.push(Object.assign({id:'m'+Date.now()+Math.random().toString(16).slice(2)}, novoM)); }
+            });
+            await setData('motoboy-cadastro', existingMoto);
+          } else {
+            await setData(key, data[key]);
+          }
         }
-        logAudit('Ambas as unidades', 'Importou backup', keysFound.length + ' área(s) restauradas');
-        showToast('Backup importado com sucesso.');
+        logAudit('Ambas as unidades', 'Importou backup', keysFound.length + ' área(s) atualizadas');
+        showToast('Importação concluída.');
         renderConfig(main);
       };
       reader.readAsText(file);
