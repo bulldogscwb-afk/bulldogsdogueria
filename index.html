@@ -1726,11 +1726,16 @@
 
   async function renderConteudo(main){
     var tab = window.__ctTab || 'receitas';
-    var html = pageHead('Receitas & Processos', tab==='receitas' ? 'Fichas técnicas por marca' : tab==='processos' ? 'Rotinas e processos por marca' : 'Registre o rendimento de uma produção');
-    html += '<div class="unit-toggle" style="margin-bottom:20px; width:fit-content;">';
+    var podeVerificar = (user.role==='dono' || user.role==='gerente');
+    var subtitulos = {receitas:'Fichas técnicas por marca', processos:'Rotinas e processos por marca', rendimento:'Registre o rendimento de uma produção', verificacao:'Controle geral dos rendimentos registrados'};
+    var html = pageHead('Receitas & Processos', subtitulos[tab] || '');
+    html += '<div class="unit-toggle" style="margin-bottom:20px; width:fit-content; flex-wrap:wrap;">';
     html += '<button data-ct-tab="receitas" class="' + (tab==='receitas'?'active':'') + '">Receitas</button>';
     html += '<button data-ct-tab="processos" class="' + (tab==='processos'?'active':'') + '">Processos</button>';
     html += '<button data-ct-tab="rendimento" class="' + (tab==='rendimento'?'active':'') + '">Registrar rendimento</button>';
+    if(podeVerificar){
+      html += '<button data-ct-tab="verificacao" class="' + (tab==='verificacao'?'active':'') + '">Verificação geral</button>';
+    }
     html += '</div>';
     html += '<div id="ct-tab-content"></div>';
     main.innerHTML = html;
@@ -1741,6 +1746,7 @@
 
     var content = document.getElementById('ct-tab-content');
     if(tab==='rendimento'){ await renderRendimentoTab(content); }
+    else if(tab==='verificacao' && podeVerificar){ await renderVerificacaoTab(content); }
     else { await renderFichasTab(content, tab==='processos' ? 'processo' : 'receita'); }
   }
 
@@ -2079,6 +2085,121 @@
     return rows;
   }
 
+
+
+  function diasAtras(n){
+    var d = new Date();
+    d.setDate(d.getDate()-n);
+    return isoDate(d);
+  }
+
+  async function renderVerificacaoTab(main){
+    var items = await getConteudo();
+    __insumoPrecos = await getData('insumos-precos', {});
+    var receitas = items.filter(function(it){ return it.tipo==='receita'; });
+
+    var startDate = window.__vfStart || diasAtras(30);
+    var endDate = window.__vfEnd || todayISO();
+    var filtroMarca = window.__vfMarca || 'todas';
+
+    var html = '<div class="card" style="margin-bottom:16px;">';
+    html += '<div style="display:flex; gap:12px; flex-wrap:flex-end; flex-wrap:wrap; align-items:flex-end;">';
+    html += '<div class="form-field" style="margin:0;"><label>Data inicial</label><input type="date" id="vf-start" value="' + startDate + '"></div>';
+    html += '<div class="form-field" style="margin:0;"><label>Data final</label><input type="date" id="vf-end" value="' + endDate + '"></div>';
+    html += '<div class="form-field" style="margin:0; max-width:220px;"><label>Marca</label><select id="vf-marca"><option value="todas"' + (filtroMarca==='todas'?' selected':'') + '>Todas as marcas</option>' +
+      MARCAS.map(function(m){ return '<option value="' + escapeHtml(m) + '"' + (filtroMarca===m?' selected':'') + '>' + escapeHtml(m) + '</option>'; }).join('') + '</select></div>';
+    html += '</div></div>';
+
+    var registros = [];
+    receitas.forEach(function(r){
+      if(filtroMarca!=='todas' && r.marca!==filtroMarca && r.marca!=='todas') return;
+      (r.producoes||[]).forEach(function(p){
+        if(p.data<startDate || p.data>endDate) return;
+        var peso = calcularPesoTotalKg(p.ingredientes||[]);
+        var obtido = parseRendimentoNumero(p.rendimentoTotal);
+        var indice = (peso && obtido) ? (obtido/peso.total*100) : null;
+        var custoInfo = calcularCustoIngredientes(p.ingredientes||[]);
+        registros.push({
+          receitaId: r.id, receitaTitulo: r.titulo, marca: r.marca,
+          data: p.data, rendimentoTotal: p.rendimentoTotal, responsavel: p.responsavel,
+          indice: indice, custo: custoInfo.total
+        });
+      });
+    });
+    registros.sort(function(a,b){ return b.data.localeCompare(a.data); });
+
+    var custoTotalPeriodo = registros.reduce(function(s,r){ return s+r.custo; }, 0);
+    html += '<div class="grid-4" style="margin-bottom:16px;">';
+    html += statCard('Lotes registrados', registros.length, false);
+    html += statCard('Custo total do período', custoTotalPeriodo, true);
+    html += statCard('Receitas com registro', Object.keys(registros.reduce(function(acc,r){ acc[r.receitaId]=1; return acc; }, {})).length, false);
+    var comIndice = registros.filter(function(r){ return r.indice!=null; });
+    var mediaGeral = comIndice.length ? (comIndice.reduce(function(s,r){ return s+r.indice; },0)/comIndice.length) : null;
+    html += statCard('Índice médio geral', mediaGeral!=null ? (Math.round(mediaGeral*10)/10)+'%' : '—', false);
+    html += '</div>';
+
+    var porReceita = {};
+    registros.forEach(function(reg){
+      if(!porReceita[reg.receitaId]) porReceita[reg.receitaId] = {titulo:reg.receitaTitulo, marca:reg.marca, indices:[], custos:[], count:0};
+      var pr = porReceita[reg.receitaId];
+      pr.count++;
+      if(reg.indice!=null) pr.indices.push(reg.indice);
+      pr.custos.push(reg.custo);
+    });
+    var idsReceita = Object.keys(porReceita).sort(function(a,b){ return porReceita[a].titulo.localeCompare(porReceita[b].titulo); });
+
+    html += '<div class="card" style="margin-bottom:16px;">';
+    html += '<div style="font-weight:600; font-size:14px; margin-bottom:10px;">Consistência por receita</div>';
+    if(idsReceita.length===0){
+      html += '<div class="empty">Nenhum rendimento registrado nesse período/marca.</div>';
+    } else {
+      html += '<div class="table-scroll"><table><thead><tr><th>Receita</th><th>Marca</th><th>Lotes</th><th>Índice médio</th><th>Variação</th><th>Custo médio/lote</th><th></th></tr></thead><tbody>';
+      idsReceita.forEach(function(id){
+        var pr = porReceita[id];
+        var mediaIdx = pr.indices.length ? pr.indices.reduce(function(s,v){return s+v;},0)/pr.indices.length : null;
+        var minIdx = pr.indices.length ? Math.min.apply(null, pr.indices) : null;
+        var maxIdx = pr.indices.length ? Math.max.apply(null, pr.indices) : null;
+        var variacao = (minIdx!=null && maxIdx!=null) ? (maxIdx-minIdx) : null;
+        var custoMedio = pr.custos.length ? pr.custos.reduce(function(s,v){return s+v;},0)/pr.custos.length : 0;
+        var alerta = '';
+        if(pr.count<2){ alerta = '<span class="lock-badge" style="background:var(--brass-bg); color:var(--brass);">poucos dados</span>'; }
+        else if(variacao!=null && variacao>15){ alerta = '<span class="lock-badge" style="background:var(--warn-bg); color:var(--warn-txt);">variação alta</span>'; }
+        else { alerta = '<span class="lock-badge" style="background:var(--ok-bg); color:var(--ok-txt);">consistente</span>'; }
+        html += '<tr><td>' + escapeHtml(pr.titulo) + '</td><td>' + escapeHtml(marcaLabel(pr.marca)) + '</td>' +
+          '<td class="num-cell">' + pr.count + '</td>' +
+          '<td class="num-cell">' + (mediaIdx!=null ? (Math.round(mediaIdx*10)/10)+'%' : '—') + '</td>' +
+          '<td class="num-cell">' + (variacao!=null ? (Math.round(variacao*10)/10)+' p.p.' : '—') + '</td>' +
+          '<td class="num-cell">R$ ' + custoMedio.toFixed(2).replace('.',',') + '</td>' +
+          '<td>' + alerta + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    html += '</div>';
+
+    html += '<div class="card">';
+    html += '<div style="font-weight:600; font-size:14px; margin-bottom:10px;">Todos os registros do período</div>';
+    if(registros.length===0){
+      html += '<div class="empty">Nada por aqui ainda.</div>';
+    } else {
+      html += '<div class="table-scroll"><table><thead><tr><th>Data</th><th>Receita</th><th>Marca</th><th>Rendimento obtido</th><th>Índice</th><th>Custo do lote</th><th>Responsável</th></tr></thead><tbody>';
+      registros.slice(0,100).forEach(function(r){
+        html += '<tr><td class="num-cell">' + r.data + '</td><td>' + escapeHtml(r.receitaTitulo) + '</td><td>' + escapeHtml(marcaLabel(r.marca)) + '</td>' +
+          '<td class="num-cell">' + escapeHtml(r.rendimentoTotal||'') + '</td>' +
+          '<td class="num-cell">' + (r.indice!=null ? (Math.round(r.indice*10)/10)+'%' : '—') + '</td>' +
+          '<td class="num-cell">R$ ' + r.custo.toFixed(2).replace('.',',') + '</td>' +
+          '<td>' + escapeHtml(r.responsavel) + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+      if(registros.length>100){ html += '<div style="font-size:11px; color:var(--muted); margin-top:8px;">Mostrando os 100 mais recentes de ' + registros.length + '.</div>'; }
+    }
+    html += '</div>';
+
+    main.innerHTML = html;
+
+    document.getElementById('vf-start').addEventListener('change', function(){ window.__vfStart = this.value || startDate; renderVerificacaoTab(main); });
+    document.getElementById('vf-end').addEventListener('change', function(){ window.__vfEnd = this.value || endDate; renderVerificacaoTab(main); });
+    document.getElementById('vf-marca').addEventListener('change', function(){ window.__vfMarca = this.value; renderVerificacaoTab(main); });
+  }
 
 
   async function renderRendimentoTab(main){
