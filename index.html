@@ -278,6 +278,7 @@
     {id:'documentos', label:'Documentos', icon:'ti-folder', roles:['dono','gerente']},
     {id:'conteudo', label:'Receitas & Processos', icon:'ti-book-2', roles:['dono','gerente','supervisor','equipe','caixa']},
     {id:'checklists', label:'Checklists', icon:'ti-checkbox', roles:['dono','gerente','supervisor','equipe']},
+    {id:'area-colaborador', label:'Área do Colaborador', icon:'ti-user-heart', roles:['dono','gerente','supervisor','equipe','caixa']},
     {id:'avaliacoes', label:'Avaliações', icon:'ti-star', roles:['dono','gerente','supervisor']},
     {id:'auditoria', label:'Auditoria', icon:'ti-history', roles:['dono','gerente']},
     {id:'config', label:'Configurações', icon:'ti-settings', roles:['dono']},
@@ -684,6 +685,7 @@
     else if(currentPage === 'documentos') await renderDocumentos(main);
     else if(currentPage === 'conteudo') await renderConteudo(main);
     else if(currentPage === 'checklists') await renderChecklists(main);
+    else if(currentPage === 'area-colaborador') await renderAreaColaborador(main);
     else if(currentPage === 'avaliacoes') await renderAvaliacoes(main);
     else if(currentPage === 'auditoria') await renderAuditoria(main);
     else if(currentPage === 'config') await renderConfig(main);
@@ -1674,56 +1676,6 @@
 
   function marcaLabel(m){ return m==='todas' ? 'Todas as marcas' : m; }
 
-  function openDataUrlInNewTab(dataUrl){
-    try{
-      var parts = dataUrl.split(',');
-      var mimeMatch = parts[0].match(/data:(.*?);base64/);
-      var mime = mimeMatch ? mimeMatch[1] : 'application/pdf';
-      var binary = atob(parts[1]);
-      var bytes = new Uint8Array(binary.length);
-      for(var i=0; i<binary.length; i++){ bytes[i] = binary.charCodeAt(i); }
-      var blob = new Blob([bytes], {type: mime});
-      var blobUrl = URL.createObjectURL(blob);
-      window.open(blobUrl, '_blank');
-    }catch(err){
-      showToast('Não consegui abrir esse arquivo.', 'error');
-    }
-  }
-
-  function resizeImageFile(file, maxDim){
-    return new Promise(function(resolve, reject){
-      var reader = new FileReader();
-      reader.onload = function(e){
-        var img = new Image();
-        img.onload = function(){
-          var w = img.width, h = img.height;
-          if(w > h){ if(w > maxDim){ h = Math.round(h*maxDim/w); w = maxDim; } }
-          else { if(h > maxDim){ w = Math.round(w*maxDim/h); h = maxDim; } }
-          var canvas = document.createElement('canvas');
-          canvas.width = w; canvas.height = h;
-          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-          resolve(canvas.toDataURL('image/jpeg', 0.75));
-        };
-        img.onerror = function(){ reject(new Error('não consegui ler essa imagem')); };
-        img.src = e.target.result;
-      };
-      reader.onerror = function(){ reject(new Error('não consegui ler esse arquivo')); };
-      reader.readAsDataURL(file);
-    });
-  }
-
-  async function getConteudo(){
-    var existing = await getData('conteudo', null);
-    if(existing !== null) return existing;
-    var oldRecipes = await getData('recipes', []);
-    var oldProcesses = await getData('processes', []);
-    var migrado = [];
-    oldRecipes.forEach(function(r){ migrado.push({id:r.id, tipo:'receita', titulo:r.title, corpo:r.body, marca:'todas', imagem:''}); });
-    oldProcesses.forEach(function(p){ migrado.push({id:p.id, tipo:'processo', titulo:p.title, corpo:p.body, marca:'todas', imagem:''}); });
-    await setData('conteudo', migrado);
-    return migrado;
-  }
-
   async function renderConteudo(main){
     var tab = window.__ctTab || 'receitas';
     var podeVerificar = (user.role==='dono' || user.role==='gerente');
@@ -2658,6 +2610,356 @@
     }
   }
 
+  // ============ ÁREA DO COLABORADOR ============
+  var isAdmin = function(){ return user.role==='dono' || user.role==='gerente'; };
+
+  async function renderAreaColaborador(main){
+    var tab = window.__acTab || 'folga';
+    var html = pageHead('Área do Colaborador', 'Folgas, atestados, sugestões e pedidos de compra');
+    html += '<div class="unit-toggle" style="margin-bottom:20px; width:fit-content; flex-wrap:wrap;">';
+    html += '<button data-ac-tab="folga" class="' + (tab==='folga'?'active':'') + '">Pedidos de folga</button>';
+    html += '<button data-ac-tab="atestado" class="' + (tab==='atestado'?'active':'') + '">Atestados</button>';
+    html += '<button data-ac-tab="ideia" class="' + (tab==='ideia'?'active':'') + '">Sugestões / ideias</button>';
+    html += '<button data-ac-tab="compra" class="' + (tab==='compra'?'active':'') + '">Sugestão de compras</button>';
+    html += '</div>';
+    html += '<div id="ac-tab-content"></div>';
+    main.innerHTML = html;
+
+    main.querySelectorAll('[data-ac-tab]').forEach(function(b){
+      b.onclick = function(){ window.__acTab = b.getAttribute('data-ac-tab'); renderAreaColaborador(main); };
+    });
+
+    var content = document.getElementById('ac-tab-content');
+    if(tab==='atestado') await renderAcAtestados(content);
+    else if(tab==='ideia') await renderAcIdeias(content);
+    else if(tab==='compra') await renderAcCompras(content);
+    else await renderAcFolgas(content);
+  }
+
+  // ---------- Pedidos de folga ----------
+  async function renderAcFolgas(main){
+    var todos = await getData('pedidos-folga', []);
+    var minhas = todos.filter(function(p){ return p.username===user.username; }).sort(function(a,b){ return b.criadoEm.localeCompare(a.criadoEm); });
+
+    var html = '<div class="card" style="margin-bottom:16px;">';
+    html += '<div style="font-weight:600; font-size:14px; margin-bottom:12px;">Novo pedido de folga</div>';
+    html += '<div class="form-grid" style="grid-template-columns:1fr 1fr;">';
+    html += '<div class="form-field" style="margin:0;"><label>Data início</label><input type="date" id="folga-inicio"></div>';
+    html += '<div class="form-field" style="margin:0;"><label>Data fim</label><input type="date" id="folga-fim"></div>';
+    html += '</div>';
+    html += '<div class="form-field" style="margin-top:12px;"><label>Motivo (opcional)</label><textarea id="folga-motivo" rows="2" style="width:100%; padding:9px; border:1px solid var(--line); border-radius:7px; background:var(--paper);"></textarea></div>';
+    html += '<div style="margin-top:12px;"><button class="btn primary" id="folga-enviar">Enviar pedido</button></div>';
+    html += '</div>';
+
+    html += '<div class="card" style="margin-bottom:16px;">';
+    html += '<div style="font-weight:600; font-size:14px; margin-bottom:10px;">Meus pedidos</div>';
+    if(minhas.length===0){
+      html += '<div class="empty">Você ainda não pediu nenhuma folga.</div>';
+    } else {
+      html += '<table><thead><tr><th>Período</th><th>Motivo</th><th>Status</th></tr></thead><tbody>';
+      minhas.forEach(function(p){
+        var cor = p.status==='aprovado' ? 'var(--ok-txt)' : p.status==='recusado' ? 'var(--warn-txt)' : 'var(--muted)';
+        var fundo = p.status==='aprovado' ? 'var(--ok-bg)' : p.status==='recusado' ? 'var(--warn-bg)' : 'var(--brass-bg)';
+        html += '<tr><td class="num-cell">' + p.dataInicio + ' a ' + p.dataFim + '</td><td>' + escapeHtml(p.motivo||'—') + '</td>' +
+          '<td><span class="lock-badge" style="background:' + fundo + '; color:' + cor + ';">' + p.status + '</span></td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div>';
+
+    if(isAdmin()){
+      var pendentesTodos = todos.filter(function(p){ return p.unit===user.unit || user.role==='dono'; })
+        .sort(function(a,b){ return b.criadoEm.localeCompare(a.criadoEm); });
+      html += '<div class="card">';
+      html += '<div style="font-weight:600; font-size:14px; margin-bottom:10px;">Todos os pedidos' + (user.role==='dono' ? ' (todas as unidades)' : ' da unidade') + '</div>';
+      if(pendentesTodos.length===0){
+        html += '<div class="empty">Nenhum pedido registrado ainda.</div>';
+      } else {
+        html += '<div class="table-scroll"><table><thead><tr><th>Nome</th><th>Unidade</th><th>Período</th><th>Motivo</th><th>Status</th><th></th></tr></thead><tbody>';
+        pendentesTodos.forEach(function(p){
+          html += '<tr><td>' + escapeHtml(p.nome) + '</td><td>' + labelUnit(p.unit) + '</td><td class="num-cell">' + p.dataInicio + ' a ' + p.dataFim + '</td>' +
+            '<td>' + escapeHtml(p.motivo||'—') + '</td><td>' + p.status + '</td>' +
+            '<td>' + (p.status==='pendente' ? '<button class="btn" data-folga-aprovar="' + p.id + '" style="padding:4px 9px; font-size:11.5px;">Aprovar</button> <button class="btn" data-folga-recusar="' + p.id + '" style="padding:4px 9px; font-size:11.5px;">Recusar</button>' : '') + '</td></tr>';
+        });
+        html += '</tbody></table></div>';
+      }
+      html += '</div>';
+    }
+
+    main.innerHTML = html;
+
+    document.getElementById('folga-enviar').onclick = async function(){
+      var inicio = document.getElementById('folga-inicio').value;
+      var fim = document.getElementById('folga-fim').value;
+      var motivo = document.getElementById('folga-motivo').value.trim();
+      if(!inicio || !fim){ showToast('Preencha as datas de início e fim.', 'error'); return; }
+      var all = await getData('pedidos-folga', []);
+      all.push({id:'pf'+Date.now(), unit:user.unit, username:user.username, nome:user.nome, dataInicio:inicio, dataFim:fim, motivo:motivo, status:'pendente', criadoEm:new Date().toISOString()});
+      var saved = await setData('pedidos-folga', all);
+      if(saved){ logAudit(user.unit, 'Pediu folga', inicio + ' a ' + fim); showToast('Pedido enviado.'); }
+      renderAcFolgas(main);
+    };
+
+    if(isAdmin()){
+      main.querySelectorAll('[data-folga-aprovar]').forEach(function(btn){
+        btn.onclick = async function(){
+          var id = btn.getAttribute('data-folga-aprovar');
+          var all = await getData('pedidos-folga', []);
+          var idx = all.findIndex(function(p){ return p.id===id; });
+          if(idx>-1){
+            all[idx].status = 'aprovado';
+            var saved = await setData('pedidos-folga', all);
+            if(saved){ logAudit(all[idx].unit, 'Aprovou pedido de folga', all[idx].nome + ' · ' + all[idx].dataInicio); }
+          }
+          renderAcFolgas(main);
+        };
+      });
+      main.querySelectorAll('[data-folga-recusar]').forEach(function(btn){
+        btn.onclick = async function(){
+          var id = btn.getAttribute('data-folga-recusar');
+          var all = await getData('pedidos-folga', []);
+          var idx = all.findIndex(function(p){ return p.id===id; });
+          if(idx>-1){
+            all[idx].status = 'recusado';
+            var saved = await setData('pedidos-folga', all);
+            if(saved){ logAudit(all[idx].unit, 'Recusou pedido de folga', all[idx].nome + ' · ' + all[idx].dataInicio); }
+          }
+          renderAcFolgas(main);
+        };
+      });
+    }
+  }
+
+  // ---------- Atestados ----------
+  async function renderAcAtestados(main){
+    var todos = await getData('atestados-colaborador', []);
+    var minhas = todos.filter(function(a){ return a.username===user.username; }).sort(function(a,b){ return b.criadoEm.localeCompare(a.criadoEm); });
+
+    var html = '<div class="card" style="margin-bottom:16px;">';
+    html += '<div style="font-weight:600; font-size:14px; margin-bottom:12px;">Enviar atestado</div>';
+    html += '<div class="form-grid" style="grid-template-columns:1fr 1fr;">';
+    html += '<div class="form-field" style="margin:0;"><label>Data início</label><input type="date" id="at-inicio"></div>';
+    html += '<div class="form-field" style="margin:0;"><label>Data fim</label><input type="date" id="at-fim"></div>';
+    html += '</div>';
+    html += '<div class="form-field" style="margin-top:12px;"><label>Motivo (opcional)</label><input class="grid-input wide" style="width:100%;" type="text" id="at-motivo" placeholder="Ex: consulta médica"></div>';
+    html += '<div class="form-field" style="margin-top:12px;"><label>Foto ou PDF do atestado (opcional)</label><input type="file" id="at-arquivo" accept="image/*,application/pdf"><div id="at-preview" style="margin-top:8px;"></div></div>';
+    html += '<div style="margin-top:12px;"><button class="btn primary" id="at-enviar">Enviar atestado</button></div>';
+    html += '<div style="font-size:11px; color:var(--muted); margin-top:8px;">Visível só pro Dono e Gerente da sua unidade.</div>';
+    html += '</div>';
+
+    html += '<div class="card">';
+    html += '<div style="font-weight:600; font-size:14px; margin-bottom:10px;">Meus atestados</div>';
+    if(minhas.length===0){
+      html += '<div class="empty">Nenhum atestado enviado ainda.</div>';
+    } else {
+      html += '<table><thead><tr><th>Período</th><th>Motivo</th><th>Arquivo</th></tr></thead><tbody>';
+      minhas.forEach(function(a){
+        html += '<tr><td class="num-cell">' + a.dataInicio + ' a ' + a.dataFim + '</td><td>' + escapeHtml(a.motivo||'—') + '</td>' +
+          '<td>' + (a.arquivo ? '<button class="btn" data-at-abrir="' + a.id + '" style="padding:4px 9px; font-size:11.5px;">Abrir</button>' : '—') + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div>';
+
+    if(isAdmin()){
+      var todosAdmin = todos.filter(function(a){ return a.unit===user.unit || user.role==='dono'; })
+        .sort(function(a,b){ return b.criadoEm.localeCompare(a.criadoEm); });
+      html += '<div style="height:16px"></div><div class="card">';
+      html += '<div style="font-weight:600; font-size:14px; margin-bottom:10px;">Todos os atestados' + (user.role==='dono' ? ' (todas as unidades)' : ' da unidade') + '</div>';
+      if(todosAdmin.length===0){
+        html += '<div class="empty">Nenhum atestado registrado ainda.</div>';
+      } else {
+        html += '<div class="table-scroll"><table><thead><tr><th>Nome</th><th>Unidade</th><th>Período</th><th>Motivo</th><th>Arquivo</th></tr></thead><tbody>';
+        todosAdmin.forEach(function(a){
+          html += '<tr><td>' + escapeHtml(a.nome) + '</td><td>' + labelUnit(a.unit) + '</td><td class="num-cell">' + a.dataInicio + ' a ' + a.dataFim + '</td>' +
+            '<td>' + escapeHtml(a.motivo||'—') + '</td>' +
+            '<td>' + (a.arquivo ? '<button class="btn" data-at-abrir="' + a.id + '" style="padding:4px 9px; font-size:11.5px;">Abrir</button>' : '—') + '</td></tr>';
+        });
+        html += '</tbody></table></div>';
+      }
+      html += '</div>';
+    }
+
+    main.innerHTML = html;
+
+    var pendingArquivo = '';
+    var arquivoInput = document.getElementById('at-arquivo');
+    arquivoInput.addEventListener('change', async function(){
+      var file = arquivoInput.files[0];
+      if(!file) return;
+      try{
+        if(file.type==='application/pdf'){
+          if(file.size > 4*1024*1024){ showToast('Arquivo muito grande (máximo 4MB).', 'error'); return; }
+          pendingArquivo = await new Promise(function(resolve, reject){
+            var reader = new FileReader();
+            reader.onload = function(e){ resolve(e.target.result); };
+            reader.onerror = function(){ reject(new Error('erro')); };
+            reader.readAsDataURL(file);
+          });
+          document.getElementById('at-preview').innerHTML = '<span style="font-size:12.5px; color:var(--muted);">PDF selecionado: ' + escapeHtml(file.name) + '</span>';
+        } else {
+          pendingArquivo = await resizeImageFile(file, 1000);
+          document.getElementById('at-preview').innerHTML = '<img src="' + pendingArquivo + '" style="max-width:160px; border-radius:8px;">';
+        }
+      }catch(err){
+        showToast('Não consegui processar esse arquivo.', 'error');
+      }
+    });
+
+    document.getElementById('at-enviar').onclick = async function(){
+      var inicio = document.getElementById('at-inicio').value;
+      var fim = document.getElementById('at-fim').value;
+      var motivo = document.getElementById('at-motivo').value.trim();
+      if(!inicio || !fim){ showToast('Preencha as datas de início e fim.', 'error'); return; }
+      var all = await getData('atestados-colaborador', []);
+      all.push({id:'at'+Date.now(), unit:user.unit, username:user.username, nome:user.nome, dataInicio:inicio, dataFim:fim, motivo:motivo, arquivo:pendingArquivo, criadoEm:new Date().toISOString()});
+      var saved = await setData('atestados-colaborador', all);
+      if(saved){ logAudit(user.unit, 'Enviou atestado', inicio + ' a ' + fim); showToast('Atestado enviado.'); }
+      renderAcAtestados(main);
+    };
+
+    main.querySelectorAll('[data-at-abrir]').forEach(function(btn){
+      btn.onclick = function(){
+        var id = btn.getAttribute('data-at-abrir');
+        var item = todos.find(function(a){ return a.id===id; });
+        if(item && item.arquivo){
+          if(item.arquivo.indexOf('application/pdf')!==-1){ openDataUrlInNewTab(item.arquivo); }
+          else { window.open(item.arquivo, '_blank'); }
+        }
+      };
+    });
+  }
+
+  // ---------- Sugestões / ideias (100% anônimo) ----------
+  async function renderAcIdeias(main){
+    var html = '<div class="card" style="margin-bottom:16px;">';
+    html += '<div style="font-weight:600; font-size:14px; margin-bottom:6px;">Enviar sugestão ou ideia</div>';
+    html += '<div style="font-size:12px; color:var(--muted); margin-bottom:12px;">100% anônimo — o sistema não guarda quem enviou, nem o Dono consegue saber.</div>';
+    html += '<textarea id="ideia-texto" rows="4" style="width:100%; padding:9px; border:1px solid var(--line); border-radius:7px; background:var(--paper);" placeholder="Escreva sua sugestão ou ideia de melhoria…"></textarea>';
+    html += '<div style="margin-top:12px;"><button class="btn primary" id="ideia-enviar">Enviar anonimamente</button></div>';
+    html += '</div>';
+
+    if(isAdmin()){
+      var todas = (await getData('sugestoes-ideias', [])).slice().sort(function(a,b){ return b.criadoEm.localeCompare(a.criadoEm); });
+      html += '<div class="card">';
+      html += '<div style="font-weight:600; font-size:14px; margin-bottom:10px;">Sugestões recebidas</div>';
+      html += '<div style="font-size:11.5px; color:var(--muted); margin-bottom:10px;">Sem nome de quem enviou — é assim mesmo, por design.</div>';
+      if(todas.length===0){
+        html += '<div class="empty">Nenhuma sugestão recebida ainda.</div>';
+      } else {
+        todas.forEach(function(s){
+          html += '<div class="item-row">';
+          html += '<div style="display:flex; justify-content:space-between; gap:8px; flex-wrap:wrap;">';
+          html += '<div class="item-meta">' + new Date(s.criadoEm).toLocaleDateString('pt-BR') + '</div>';
+          html += '<select class="grid-select" data-ideia-status="' + s.id + '">' +
+            ['nova','em análise','implementada','arquivada'].map(function(st){ return '<option value="' + st + '"' + (s.status===st?' selected':'') + '>' + st + '</option>'; }).join('') +
+          '</select>';
+          html += '</div>';
+          html += '<div class="item-body">' + escapeHtml(s.texto) + '</div>';
+          html += '</div>';
+        });
+      }
+      html += '</div>';
+    }
+
+    main.innerHTML = html;
+
+    document.getElementById('ideia-enviar').onclick = async function(){
+      var texto = document.getElementById('ideia-texto').value.trim();
+      if(!texto){ showToast('Escreva sua sugestão antes de enviar.', 'error'); return; }
+      var all = await getData('sugestoes-ideias', []);
+      all.push({id:'id'+Date.now()+Math.random().toString(16).slice(2), texto:texto, status:'nova', criadoEm:new Date().toISOString()});
+      var saved = await setData('sugestoes-ideias', all);
+      if(saved){ showToast('Enviado anonimamente. Obrigado pela ideia!'); }
+      document.getElementById('ideia-texto').value = '';
+    };
+
+    if(isAdmin()){
+      main.querySelectorAll('[data-ideia-status]').forEach(function(sel){
+        sel.addEventListener('change', async function(){
+          var id = sel.getAttribute('data-ideia-status');
+          var all = await getData('sugestoes-ideias', []);
+          var idx = all.findIndex(function(s){ return s.id===id; });
+          if(idx>-1){ all[idx].status = sel.value; await setData('sugestoes-ideias', all); }
+        });
+      });
+    }
+  }
+
+  // ---------- Sugestão de compras ----------
+  async function renderAcCompras(main){
+    var todos = await getData('sugestoes-compras', []);
+    var minhas = todos.filter(function(c){ return c.username===user.username; }).sort(function(a,b){ return b.criadoEm.localeCompare(a.criadoEm); });
+
+    var html = '<div class="card" style="margin-bottom:16px;">';
+    html += '<div style="font-weight:600; font-size:14px; margin-bottom:12px;">Sugerir uma compra</div>';
+    html += '<div class="form-field" style="margin:0;"><label>O que precisa comprar?</label><input class="grid-input wide" style="width:100%;" type="text" id="compra-item" placeholder="Ex: luvas descartáveis"></div>';
+    html += '<div class="form-field" style="margin-top:10px;"><label>Detalhes (opcional)</label><input class="grid-input wide" style="width:100%;" type="text" id="compra-detalhe" placeholder="Quantidade, urgência, etc."></div>';
+    html += '<div style="margin-top:12px;"><button class="btn primary" id="compra-enviar">Enviar sugestão</button></div>';
+    html += '</div>';
+
+    html += '<div class="card">';
+    html += '<div style="font-weight:600; font-size:14px; margin-bottom:10px;">Minhas sugestões</div>';
+    if(minhas.length===0){
+      html += '<div class="empty">Você ainda não sugeriu nenhuma compra.</div>';
+    } else {
+      html += '<table><thead><tr><th>Item</th><th>Detalhes</th><th>Status</th></tr></thead><tbody>';
+      minhas.forEach(function(c){
+        html += '<tr><td>' + escapeHtml(c.item) + '</td><td style="color:var(--muted);">' + escapeHtml(c.detalhe||'—') + '</td><td>' + c.status + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div>';
+
+    if(isAdmin()){
+      var todosAdmin = todos.filter(function(c){ return c.unit===user.unit || user.role==='dono'; })
+        .sort(function(a,b){ return b.criadoEm.localeCompare(a.criadoEm); });
+      html += '<div style="height:16px"></div><div class="card">';
+      html += '<div style="font-weight:600; font-size:14px; margin-bottom:10px;">Todas as sugestões de compra' + (user.role==='dono' ? ' (todas as unidades)' : ' da unidade') + '</div>';
+      if(todosAdmin.length===0){
+        html += '<div class="empty">Nenhuma sugestão de compra ainda.</div>';
+      } else {
+        html += '<div class="table-scroll"><table><thead><tr><th>Nome</th><th>Unidade</th><th>Item</th><th>Detalhes</th><th>Status</th></tr></thead><tbody>';
+        todosAdmin.forEach(function(c){
+          html += '<tr><td>' + escapeHtml(c.nome) + '</td><td>' + labelUnit(c.unit) + '</td><td>' + escapeHtml(c.item) + '</td><td style="color:var(--muted);">' + escapeHtml(c.detalhe||'—') + '</td>' +
+            '<td><select class="grid-select" data-compra-status="' + c.id + '">' +
+              ['pendente','comprado','recusado'].map(function(st){ return '<option value="' + st + '"' + (c.status===st?' selected':'') + '>' + st + '</option>'; }).join('') +
+            '</select></td></tr>';
+        });
+        html += '</tbody></table></div>';
+      }
+      html += '</div>';
+    }
+
+    main.innerHTML = html;
+
+    document.getElementById('compra-enviar').onclick = async function(){
+      var item = document.getElementById('compra-item').value.trim();
+      var detalhe = document.getElementById('compra-detalhe').value.trim();
+      if(!item){ showToast('Informe o item que precisa comprar.', 'error'); return; }
+      var all = await getData('sugestoes-compras', []);
+      all.push({id:'cp'+Date.now(), unit:user.unit, username:user.username, nome:user.nome, item:item, detalhe:detalhe, status:'pendente', criadoEm:new Date().toISOString()});
+      var saved = await setData('sugestoes-compras', all);
+      if(saved){ logAudit(user.unit, 'Sugeriu compra', item); showToast('Sugestão enviada.'); }
+      renderAcCompras(main);
+    };
+
+    if(isAdmin()){
+      main.querySelectorAll('[data-compra-status]').forEach(function(sel){
+        sel.addEventListener('change', async function(){
+          var id = sel.getAttribute('data-compra-status');
+          var all = await getData('sugestoes-compras', []);
+          var idx = all.findIndex(function(c){ return c.id===id; });
+          if(idx>-1){
+            all[idx].status = sel.value;
+            var saved = await setData('sugestoes-compras', all);
+            if(saved){ logAudit(all[idx].unit, 'Atualizou sugestão de compra', all[idx].item + ' · ' + sel.value); }
+          }
+        });
+      });
+    }
+  }
+
   // ============ AUDITORIA (dono/gerente) ============
   async function renderAuditoria(main){
     var canPickUnit = user.role==='dono';
@@ -2910,7 +3212,8 @@
 
     var BACKUP_KEYS = ['motoboys-entries','rates-unidade1','rates-unidade2','motoboy-schedule','motoboy-cadastro',
       'motoboys-turno-status','motoboys-turno-removidos','caixa-fechamento','caixa-fechamento-status','conteudo','nav-permissions','avaliacoes',
-      'colaboradores-avaliacao','insumos-cadastro','insumos-nomes','insumos-precos','checklist-status','audit-log','users-list'];
+      'colaboradores-avaliacao','insumos-cadastro','insumos-nomes','insumos-precos','checklist-status','audit-log','users-list',
+      'pedidos-folga','atestados-colaborador','sugestoes-ideias','sugestoes-compras'];
 
     document.getElementById('backup-export').onclick = async function(){
       var values = await Promise.all(BACKUP_KEYS.map(function(k){ return getData(k, null); }));
