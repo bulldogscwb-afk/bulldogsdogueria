@@ -1942,6 +1942,45 @@
     return chave ? __insumoPrecos[chave] : null;
   }
 
+  function abrirDetalheRendimento(p, receitaTitulo, marca){
+    var custoInfo = calcularCustoIngredientes(p.ingredientes||[]);
+    var peso = calcularPesoTotalKg(p.ingredientes||[]);
+    var obtido = parseRendimentoNumero(p.rendimentoTotal);
+    var indice = (peso && obtido) ? (obtido/peso.total*100) : null;
+
+    var overlay = document.createElement('div');
+    overlay.className = 'form-modal-overlay';
+    var html = '<div class="form-modal-box">';
+    html += '<div class="form-modal-close"><button class="btn" id="rd-modal-close" style="padding:6px 10px;">✕</button></div>';
+    html += '<div style="font-weight:600; font-size:15px; margin-bottom:4px;">' + escapeHtml(receitaTitulo) + '</div>';
+    html += '<div style="font-size:12px; color:var(--muted); margin-bottom:18px;">' + escapeHtml(p.data) + ' · ' + escapeHtml(marcaLabel(marca)) + ' · registrado por ' + escapeHtml(p.responsavel) + '</div>';
+
+    html += '<div style="font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; margin-bottom:6px;">Insumos usados nesse lote</div>';
+    if(p.ingredientes && p.ingredientes.length){
+      html += '<div class="table-scroll" style="margin-bottom:18px;"><table><thead><tr><th>Insumo</th><th>Quantidade</th><th>Bruto</th></tr></thead><tbody>';
+      p.ingredientes.forEach(function(ing){
+        html += '<tr><td>' + escapeHtml(ing.nome) + '</td><td class="num-cell">' + escapeHtml(ing.quantidade||'') + ' ' + escapeHtml(ing.unidade||'') + '</td>' +
+          '<td class="num-cell">' + (ing.quantidadeBruta ? escapeHtml(String(ing.quantidadeBruta)) + ' ' + escapeHtml(ing.unidade||'') : '—') + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+    } else {
+      html += '<div class="empty" style="margin-bottom:18px;">Nenhum insumo detalhado nesse registro.</div>';
+    }
+
+    html += '<div class="grid-2">';
+    html += statCard('Rendimento obtido', p.rendimentoTotal || '—', false);
+    html += statCard('Índice de rendimento', indice!=null ? (Math.round(indice*10)/10)+'%' : '—', false);
+    html += '</div>';
+    html += '<div style="margin-top:14px;">' + statCard('Custo estimado do lote', custoInfo.total, true) + '</div>';
+    html += '</div>';
+
+    overlay.innerHTML = html;
+    document.body.appendChild(overlay);
+    function fechar(){ overlay.remove(); }
+    document.getElementById('rd-modal-close').onclick = fechar;
+    overlay.addEventListener('click', function(ev){ if(ev.target===overlay) fechar(); });
+  }
+
   function calcularCustoIngredientes(ingredientes){
     var total = 0, faltando = 0;
     (ingredientes||[]).forEach(function(ing){
@@ -2074,7 +2113,7 @@
         registros.push({
           receitaId: r.id, receitaTitulo: r.titulo, marca: r.marca,
           data: p.data, rendimentoTotal: p.rendimentoTotal, responsavel: p.responsavel,
-          indice: indice, custo: custoInfo.total
+          indice: indice, custo: custoInfo.total, _producao: p
         });
       });
     });
@@ -2134,19 +2173,27 @@
       html += '<div class="empty">Nada por aqui ainda.</div>';
     } else {
       html += '<div class="table-scroll"><table><thead><tr><th>Data</th><th>Receita</th><th>Marca</th><th>Rendimento obtido</th><th>Índice</th><th>Custo do lote</th><th>Responsável</th></tr></thead><tbody>';
-      registros.slice(0,100).forEach(function(r){
-        html += '<tr><td class="num-cell">' + r.data + '</td><td>' + escapeHtml(r.receitaTitulo) + '</td><td>' + escapeHtml(marcaLabel(r.marca)) + '</td>' +
+      registros.slice(0,100).forEach(function(r, idx){
+        html += '<tr data-vf-idx="' + idx + '" style="cursor:pointer;"><td class="num-cell">' + r.data + '</td><td>' + escapeHtml(r.receitaTitulo) + '</td><td>' + escapeHtml(marcaLabel(r.marca)) + '</td>' +
           '<td class="num-cell">' + escapeHtml(r.rendimentoTotal||'') + '</td>' +
           '<td class="num-cell">' + (r.indice!=null ? (Math.round(r.indice*10)/10)+'%' : '—') + '</td>' +
           '<td class="num-cell">R$ ' + r.custo.toFixed(2).replace('.',',') + '</td>' +
           '<td>' + escapeHtml(r.responsavel) + '</td></tr>';
       });
       html += '</tbody></table></div>';
-      if(registros.length>100){ html += '<div style="font-size:11px; color:var(--muted); margin-top:8px;">Mostrando os 100 mais recentes de ' + registros.length + '.</div>'; }
+      html += '<div style="font-size:11px; color:var(--muted); margin-top:8px;">Clique numa linha pra ver os detalhes completos.</div>';
+      if(registros.length>100){ html += '<div style="font-size:11px; color:var(--muted); margin-top:4px;">Mostrando os 100 mais recentes de ' + registros.length + '.</div>'; }
     }
     html += '</div>';
 
     main.innerHTML = html;
+
+    main.querySelectorAll('[data-vf-idx]').forEach(function(row){
+      row.onclick = function(){
+        var r = registros[parseInt(row.getAttribute('data-vf-idx'), 10)];
+        if(r && r._producao) abrirDetalheRendimento(r._producao, r.receitaTitulo, r.marca);
+      };
+    });
 
     document.getElementById('vf-start').addEventListener('change', function(){ window.__vfStart = this.value || startDate; renderVerificacaoTab(main); });
     document.getElementById('vf-end').addEventListener('change', function(){ window.__vfEnd = this.value || endDate; renderVerificacaoTab(main); });
@@ -2346,11 +2393,18 @@
           if(ing.quantidadeBruta){ base += ' (bruto: ' + ing.quantidadeBruta + (ing.unidade||'') + ')'; }
           return base;
         }).join(', ');
-        h += '<tr><td class="num-cell">' + p.data + '</td><td style="color:var(--muted);">' + escapeHtml(listaIng||'—') + '</td>' +
+        h += '<tr data-hist-id="' + p.id + '" style="cursor:pointer;"><td class="num-cell">' + p.data + '</td><td style="color:var(--muted);">' + escapeHtml(listaIng||'—') + '</td>' +
           '<td class="num-cell" style="font-weight:600;">' + escapeHtml(p.rendimentoTotal||'') + '</td><td>' + escapeHtml(p.responsavel) + '</td></tr>';
       });
       h += '</tbody></table></div>';
+      h += '<div style="font-size:11px; color:var(--muted); margin-top:6px;">Clique numa linha pra ver os detalhes completos do que foi registrado.</div>';
       historicoEl.innerHTML = h;
+      historicoEl.querySelectorAll('[data-hist-id]').forEach(function(row){
+        row.onclick = function(){
+          var p = lista.find(function(x){ return x.id===row.getAttribute('data-hist-id'); });
+          if(p) abrirDetalheRendimento(p, receita.titulo, receita.marca);
+        };
+      });
     }
 
     document.getElementById('rend-item').addEventListener('change', function(){
