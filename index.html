@@ -438,6 +438,16 @@
     return Array.from(new Uint8Array(buf)).map(function(b){ return b.toString(16).padStart(2,'0'); }).join('');
   }
 
+  function gerarCodigoRecuperacao(){
+    var chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // sem O/0, I/1, L pra evitar confusão ao digitar
+    var code = '';
+    for(var i=0;i<8;i++){
+      code += chars[Math.floor(Math.random()*chars.length)];
+      if(i===3) code += '-';
+    }
+    return code;
+  }
+
   // ============ LOGIN SCREEN ============
   async function renderLogin(){
     var users = await getData('users-list', []);
@@ -475,13 +485,27 @@
       if(!nome || !username || !password){ errEl.textContent = 'Preencha todos os campos.'; return; }
       if(password.length<4){ errEl.textContent = 'Senha muito curta (mínimo 4 caracteres).'; return; }
       var hash = await hashPassword(password);
+      var codigo = gerarCodigoRecuperacao();
+      var codigoHash = await hashPassword(codigo);
       var all = await getData('users-list', []);
-      all.push({id:'u'+Date.now(), nome:nome, username:username, passwordHash:hash, role:'dono', unit:null, ativo:true});
+      all.push({id:'u'+Date.now(), nome:nome, username:username, passwordHash:hash, recoveryCodeHash:codigoHash, role:'dono', unit:null, ativo:true});
       var saved = await setData('users-list', all);
       if(!saved) return;
       user = {nome:nome, username:username, role:'dono', unit:null};
-      enterApp();
+      renderCodigoRecuperacaoTela(card, codigo, function(){ enterApp(); });
     };
+  }
+
+  function renderCodigoRecuperacaoTela(card, codigo, onContinuar){
+    card.innerHTML =
+      '<div class="login-ticket" style="text-align:center;">' +
+        '<div class="login-eyebrow">Guarde este código</div>' +
+        '<div class="login-title">Código de recuperação</div>' +
+      '</div>' +
+      '<div style="font-size:13px; color:var(--ink-2); line-height:1.6; margin-bottom:16px;">Se um dia você esquecer sua senha, esse código é o único jeito de criar uma nova sem depender de mais ninguém. Anote em algum lugar seguro (papel, gerenciador de senhas) — ele só aparece uma vez.</div>' +
+      '<div style="text-align:center; font-family:\'IBM Plex Mono\',monospace; font-size:24px; font-weight:700; letter-spacing:.05em; background:var(--paper); border:1px dashed var(--line); border-radius:10px; padding:16px; margin-bottom:16px;">' + codigo + '</div>' +
+      '<button class="btn-primary" id="codigo-continuar">Já anotei, continuar</button>';
+    document.getElementById('codigo-continuar').onclick = onContinuar;
   }
 
   function renderLoginForm(card){
@@ -497,7 +521,7 @@
       '<input class="grid-input wide" style="width:100%;" type="password" id="lg-password" placeholder="sua senha">' +
       '<div id="login-error" style="color:var(--ember); font-size:12.5px; margin-top:10px;"></div>' +
       '<button class="btn-primary" id="lg-enter">Entrar</button>' +
-      '<div style="text-align:center; font-size:12px; color:var(--muted); margin-top:14px;">Esqueceu a senha? Peça ao Dono ou Gerente da sua unidade pra redefinir em Usuários.</div>';
+      '<div style="text-align:center; font-size:12px; color:var(--muted); margin-top:14px;">Esqueceu a senha? Peça ao Dono/Gerente pra redefinir, ou <a href="#" id="lg-esqueci" style="color:var(--ember); font-weight:600;">use seu código de recuperação</a>.</div>';
 
     async function tryLogin(){
       var username = document.getElementById('lg-username').value.trim().toLowerCase();
@@ -515,6 +539,51 @@
 
     document.getElementById('lg-enter').onclick = tryLogin;
     document.getElementById('lg-password').addEventListener('keydown', function(ev){ if(ev.key==='Enter') tryLogin(); });
+    document.getElementById('lg-esqueci').onclick = function(ev){ ev.preventDefault(); renderRecuperarSenha(card); };
+  }
+
+  function renderRecuperarSenha(card){
+    card.innerHTML =
+      '<div class="login-ticket" style="text-align:center;">' +
+        '<div class="login-eyebrow">Recuperar acesso</div>' +
+        '<div class="login-title">Usar código de recuperação</div>' +
+      '</div>' +
+      '<div class="field-label">Usuário</div>' +
+      '<input class="grid-input wide" style="width:100%;" type="text" id="rc-username" placeholder="seu usuário">' +
+      '<div class="field-label">Código de recuperação</div>' +
+      '<input class="grid-input wide" style="width:100%; text-transform:uppercase;" type="text" id="rc-codigo" placeholder="XXXX-XXXX">' +
+      '<div class="field-label">Nova senha</div>' +
+      '<input class="grid-input wide" style="width:100%;" type="password" id="rc-nova-senha" placeholder="mínimo 4 caracteres">' +
+      '<div id="login-error" style="color:var(--ember); font-size:12.5px; margin-top:10px;"></div>' +
+      '<button class="btn-primary" id="rc-confirmar">Redefinir senha</button>' +
+      '<div style="text-align:center; font-size:12px; color:var(--muted); margin-top:14px;"><a href="#" id="rc-voltar" style="color:var(--ember); font-weight:600;">Voltar ao login</a></div>';
+
+    document.getElementById('rc-voltar').onclick = function(ev){ ev.preventDefault(); renderLoginForm(card); };
+
+    document.getElementById('rc-confirmar').onclick = async function(){
+      var username = document.getElementById('rc-username').value.trim().toLowerCase();
+      var codigo = document.getElementById('rc-codigo').value.trim().toUpperCase();
+      var novaSenha = document.getElementById('rc-nova-senha').value;
+      var errEl = document.getElementById('login-error');
+      errEl.textContent = '';
+      if(!username || !codigo || !novaSenha){ errEl.textContent = 'Preencha todos os campos.'; return; }
+      if(novaSenha.length<4){ errEl.textContent = 'Senha muito curta (mínimo 4 caracteres).'; return; }
+      var all = await getData('users-list', []);
+      var idx = all.findIndex(function(u){ return u.ativo!==false && u.username && u.username.toLowerCase()===username; });
+      if(idx===-1){ errEl.textContent = 'Usuário ou código incorretos.'; return; }
+      if(!all[idx].recoveryCodeHash){ errEl.textContent = 'Essa conta não tem código de recuperação cadastrado. Peça ao Dono/Gerente pra redefinir sua senha.'; return; }
+      var codigoHash = await hashPassword(codigo);
+      if(codigoHash !== all[idx].recoveryCodeHash){ errEl.textContent = 'Usuário ou código incorretos.'; return; }
+      var novoHash = await hashPassword(novaSenha);
+      var novoCodigo = gerarCodigoRecuperacao();
+      var novoCodigoHash = await hashPassword(novoCodigo);
+      all[idx].passwordHash = novoHash;
+      all[idx].recoveryCodeHash = novoCodigoHash;
+      var saved = await setData('users-list', all);
+      if(!saved) return;
+      showToast('Senha redefinida com sucesso.');
+      renderCodigoRecuperacaoTela(card, novoCodigo, function(){ renderLoginForm(card); });
+    };
   }
 
   var navPermissions = null;
@@ -2837,6 +2906,13 @@
     var html = pageHead('Usuários', user.role==='dono' ? 'Cadastro de todos os níveis, com login próprio' : 'Cadastro de Supervisor, Equipe e Caixa da sua unidade');
 
     html += '<div class="card">';
+    html += '<div style="font-weight:600; font-size:14px;">Seu código de recuperação</div>';
+    html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Se você esquecer sua senha e não tiver ninguém acima pra redefinir (caso do Dono), esse código permite criar uma senha nova sozinho, direto na tela de login.</div>';
+    html += '<div style="margin-top:12px;"><button class="btn primary" id="meu-codigo-gerar">Gerar novo código de recuperação</button></div>';
+    html += '<div id="meu-codigo-resultado" style="margin-top:12px;"></div>';
+    html += '</div>';
+
+    html += '<div style="height:16px"></div><div class="card">';
     html += '<div style="font-weight:600; font-size:14px;">Novo usuário</div>';
     html += '<div class="form-grid">';
     html += formField('text','u-nome','Nome','Nome completo');
@@ -2867,6 +2943,22 @@
     html += '</div>';
 
     main.innerHTML = html;
+
+    document.getElementById('meu-codigo-gerar').onclick = async function(){
+      if(!(await showConfirm('Gerar um novo código vai invalidar qualquer código antigo que você já tinha. Continuar?', 'Gerar código'))) return;
+      var codigo = gerarCodigoRecuperacao();
+      var codigoHash = await hashPassword(codigo);
+      var all = await getData('users-list', []);
+      var idx = all.findIndex(function(u2){ return u2.username && user.username && u2.username.toLowerCase()===user.username.toLowerCase(); });
+      if(idx===-1){ showToast('Não encontrei sua conta pra atualizar.', 'error'); return; }
+      all[idx].recoveryCodeHash = codigoHash;
+      var saved = await setData('users-list', all);
+      if(!saved) return;
+      logAudit(user.unit || 'Ambas as unidades', 'Gerou código de recuperação', user.nome);
+      var resultEl = document.getElementById('meu-codigo-resultado');
+      resultEl.innerHTML = '<div style="font-size:12.5px; color:var(--muted); margin-bottom:8px;">Guarde em lugar seguro — só aparece essa vez:</div>' +
+        '<div style="text-align:center; font-family:\'IBM Plex Mono\',monospace; font-size:20px; font-weight:700; letter-spacing:.05em; background:var(--paper); border:1px dashed var(--line); border-radius:10px; padding:14px;">' + codigo + '</div>';
+    };
 
     document.getElementById('u-save').onclick = async function(){
       var errEl = document.getElementById('u-error');
