@@ -2257,6 +2257,23 @@
     var receitas = items.filter(function(it){ return it.tipo==='receita'; });
     var dataAtual = window.__pdData || todayISO();
     var todosPlanos = await getData('producao-diaria', []);
+    var fixas = (await getData('producao-diaria-fixas', [])).filter(function(f){ return f.unit===user.unit || user.role==='dono'; });
+    var removidosHoje = (await getData('producao-diaria-removidos', []))
+      .filter(function(r){ return r.data===dataAtual && (r.unit===user.unit || user.role==='dono'); })
+      .map(function(r){ return r.receitaId; });
+
+    // Auto-provisiona as receitas marcadas como fixas, menos quem foi removido só desse dia
+    var dirty = false;
+    fixas.forEach(function(f){
+      if(removidosHoje.indexOf(f.receitaId)!==-1) return;
+      var existe = todosPlanos.some(function(p){ return p.data===dataAtual && p.unit===f.unit && p.receitaId===f.receitaId; });
+      if(!existe){
+        todosPlanos.push({id:'pd'+Date.now()+Math.random().toString(16).slice(2), data:dataAtual, unit:f.unit, receitaId:f.receitaId, receitaTitulo:f.receitaTitulo, feito:false, feitoPor:null, feitoEm:null});
+        dirty = true;
+      }
+    });
+    if(dirty) await setData('producao-diaria', todosPlanos);
+
     var planosDoDia = todosPlanos.filter(function(p){ return p.data===dataAtual && (p.unit===user.unit || user.role==='dono'); });
 
     var html = '<div class="card" style="margin-bottom:16px;">';
@@ -2266,19 +2283,25 @@
     if(podePlanejar){
       html += '<div class="card" style="margin-bottom:16px;">';
       html += '<div style="font-weight:600; font-size:14px; margin-bottom:4px;">O que precisa ser feito nesse dia</div>';
-      html += '<div style="font-size:11.5px; color:var(--muted); margin-bottom:12px;">Marque as receitas que precisam ser produzidas — a equipe vê essa lista assim que entrar.</div>';
+      html += '<div style="font-size:11.5px; color:var(--muted); margin-bottom:12px;">Marque as receitas que precisam ser produzidas hoje. Clique na estrela pra deixar fixa — ela entra sozinha todo dia, sem precisar marcar de novo.</div>';
       if(receitas.length===0){
         html += '<div class="empty">Nenhuma receita cadastrada ainda.</div>';
       } else {
         var planejadosSet = {};
         planosDoDia.forEach(function(p){ planejadosSet[p.receitaId] = true; });
+        var fixasSet = {};
+        fixas.forEach(function(f){ fixasSet[f.receitaId] = true; });
         html += '<div style="display:flex; flex-direction:column; gap:8px;">';
         receitas.forEach(function(r){
           var marcado = !!planejadosSet[r.id];
-          html += '<label style="display:flex; align-items:center; gap:8px; font-size:13px; cursor:pointer;">' +
+          var fixo = !!fixasSet[r.id];
+          html += '<div style="display:flex; align-items:center; gap:8px;">';
+          html += '<label style="display:flex; align-items:center; gap:8px; font-size:13px; cursor:pointer; flex:1;">' +
             '<input type="checkbox" data-pd-check="' + r.id + '"' + (marcado?' checked':'') + ' style="width:16px; height:16px;">' +
             escapeHtml(r.titulo) + ' <span class="lock-badge" style="background:var(--ok-bg); color:var(--ok-txt);">' + escapeHtml(marcaLabel(r.marca)) + '</span>' +
           '</label>';
+          html += '<button type="button" class="btn" data-pd-fixar="' + r.id + '" title="' + (fixo ? 'Fixa — clique pra tirar' : 'Deixar fixa todo dia') + '" style="padding:4px 9px; font-size:13px; ' + (fixo ? 'color:var(--ember); border-color:var(--ember);' : '') + '">' + (fixo ? '★' : '☆') + '</button>';
+          html += '</div>';
         });
         html += '</div>';
       }
@@ -2329,6 +2352,9 @@
               var saved1 = await setData('producao-diaria', all);
               if(saved1){ logAudit(user.unit, 'Planejou produção do dia', receita.titulo + ' · ' + dataAtual); }
             }
+            var removidos1 = await getData('producao-diaria-removidos', []);
+            removidos1 = removidos1.filter(function(r){ return !(r.data===dataAtual && r.unit===user.unit && r.receitaId===receitaId); });
+            await setData('producao-diaria-removidos', removidos1);
           } else {
             var idx = all.findIndex(function(p){ return p.data===dataAtual && p.unit===user.unit && p.receitaId===receitaId; });
             if(idx>-1){
@@ -2336,9 +2362,34 @@
               var saved2 = await setData('producao-diaria', all);
               if(saved2){ logAudit(user.unit, 'Removeu do planejamento do dia', receita.titulo + ' · ' + dataAtual); }
             }
+            var ehFixa = fixas.some(function(f){ return f.receitaId===receitaId; });
+            if(ehFixa){
+              var removidos2 = await getData('producao-diaria-removidos', []);
+              removidos2.push({unit:user.unit, data:dataAtual, receitaId:receitaId});
+              await setData('producao-diaria-removidos', removidos2);
+            }
           }
           renderProducaoDia(main, podePlanejar);
         });
+      });
+
+      main.querySelectorAll('[data-pd-fixar]').forEach(function(btn){
+        btn.onclick = async function(){
+          var receitaId = btn.getAttribute('data-pd-fixar');
+          var receita = receitas.find(function(r){ return r.id===receitaId; });
+          var all = await getData('producao-diaria-fixas', []);
+          var idx = all.findIndex(function(f){ return f.unit===user.unit && f.receitaId===receitaId; });
+          if(idx>-1){
+            all.splice(idx,1);
+            var saved1 = await setData('producao-diaria-fixas', all);
+            if(saved1){ logAudit(user.unit, 'Tirou receita fixa da produção diária', receita.titulo); }
+          } else {
+            all.push({id:'pdf'+Date.now()+Math.random().toString(16).slice(2), unit:user.unit, receitaId:receitaId, receitaTitulo:receita.titulo});
+            var saved2 = await setData('producao-diaria-fixas', all);
+            if(saved2){ logAudit(user.unit, 'Marcou receita fixa na produção diária', receita.titulo); }
+          }
+          renderProducaoDia(main, podePlanejar);
+        };
       });
     }
 
@@ -3661,7 +3712,8 @@
     var BACKUP_KEYS = ['motoboys-entries','rates-unidade1','rates-unidade2','motoboy-schedule','motoboy-cadastro',
       'motoboys-turno-status','motoboys-turno-removidos','caixa-fechamento','caixa-fechamento-status','conteudo','nav-permissions','avaliacoes',
       'colaboradores-avaliacao','insumos-cadastro','insumos-nomes','insumos-precos','checklist-status','audit-log','users-list',
-      'pedidos-folga','atestados-colaborador','sugestoes-ideias','sugestoes-compras','whatsapp-contatos','cargos-personalizados','producao-diaria'];
+      'pedidos-folga','atestados-colaborador','sugestoes-ideias','sugestoes-compras','whatsapp-contatos','cargos-personalizados','producao-diaria',
+      'producao-diaria-fixas','producao-diaria-removidos'];
 
     document.getElementById('backup-export').onclick = async function(){
       var values = await Promise.all(BACKUP_KEYS.map(function(k){ return getData(k, null); }));
