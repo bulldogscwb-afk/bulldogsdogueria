@@ -534,7 +534,7 @@
       var all = await getData('users-list', []);
       var found = all.find(function(u){ return u.ativo!==false && u.username && u.username.toLowerCase()===username && u.passwordHash===hash; });
       if(!found){ errEl.textContent = 'Usuário ou senha incorretos.'; return; }
-      user = {nome:found.nome, username:found.username, role:found.role, unit:found.unit};
+      user = {nome:found.nome, username:found.username, role:found.role, unit:found.unit, cargoId:found.cargoId||null, cargoNome:found.cargoNome||null};
       enterApp();
     }
 
@@ -588,14 +588,27 @@
   }
 
   var navPermissions = null;
+  var cargosPersonalizados = [];
   async function loadNavPermissions(){
     navPermissions = await getData('nav-permissions', {});
+    cargosPersonalizados = await getData('cargos-personalizados', []);
   }
   function effectiveRoles(navItem){
     return (navPermissions && navPermissions[navItem.id]) || navItem.roles;
   }
+  function cargoDoUsuario(){
+    if(!user.cargoId) return null;
+    return cargosPersonalizados.find(function(c){ return c.id===user.cargoId; }) || null;
+  }
   function hasNavAccess(navItem){
-    return user.role==='dono' || effectiveRoles(navItem).indexOf(user.role) !== -1;
+    if(user.role==='dono') return true;
+    var cargo = cargoDoUsuario();
+    if(cargo) return (cargo.navIds||[]).indexOf(navItem.id) !== -1;
+    return effectiveRoles(navItem).indexOf(user.role) !== -1;
+  }
+  function rotuloNivelUsuario(u2){
+    if(u2.cargoNome) return u2.cargoNome + ' (' + labelRole(u2.role) + ')';
+    return labelRole(u2.role);
   }
 
   async function enterApp(){
@@ -651,7 +664,7 @@
   // ============ APP SHELL ============
   function renderApp(){
     document.getElementById('side-user-nome').textContent = user.nome || labelRole(user.role);
-    document.getElementById('side-user-role').textContent = labelRole(user.role);
+    document.getElementById('side-user-role').textContent = user.cargoNome || labelRole(user.role);
     document.getElementById('side-user-unit').textContent = user.role==='dono' ? 'Acesso a todas as unidades' : labelUnit(user.unit);
 
     var navWrap = document.getElementById('nav-list');
@@ -1675,6 +1688,24 @@
   }
 
   function marcaLabel(m){ return m==='todas' ? 'Todas as marcas' : m; }
+
+  function linkWhatsapp(telefone, mensagem){
+    var numero = String(telefone||'').replace(/\D/g,'');
+    return 'https://wa.me/' + numero + '?text=' + encodeURIComponent(mensagem);
+  }
+
+  async function botaoAvisarWhatsappHtml(mensagem, containerId){
+    var contatos = (await getData('whatsapp-contatos', [])).filter(function(c){ return c.telefone; });
+    if(contatos.length===0) return '';
+    var html = '<div id="' + containerId + '" style="margin-top:12px;">';
+    html += '<div style="font-size:11.5px; color:var(--muted); margin-bottom:6px;">Avisar por WhatsApp:</div>';
+    html += '<div style="display:flex; gap:8px; flex-wrap:wrap;">';
+    contatos.forEach(function(c){
+      html += '<a class="btn" href="' + linkWhatsapp(c.telefone, mensagem) + '" target="_blank" rel="noopener" style="text-decoration:none; display:inline-flex; align-items:center; gap:5px;"><i class="ti ti-brand-whatsapp" aria-hidden="true"></i> ' + escapeHtml(c.nome) + '</a>';
+    });
+    html += '</div></div>';
+    return html;
+  }
 
   async function renderConteudo(main){
     var tab = window.__ctTab || 'receitas';
@@ -2703,6 +2734,10 @@
     html += '</div>';
     html += '<div class="form-field" style="margin-top:12px;"><label>Motivo (opcional)</label><textarea id="folga-motivo" rows="2" style="width:100%; padding:9px; border:1px solid var(--line); border-radius:7px; background:var(--paper);"></textarea></div>';
     html += '<div style="margin-top:12px;"><button class="btn primary" id="folga-enviar">Enviar pedido</button></div>';
+    if(window.__acLastFolgaMsg){
+      html += await botaoAvisarWhatsappHtml(window.__acLastFolgaMsg, 'folga-whats-btn');
+      window.__acLastFolgaMsg = null;
+    }
     html += '</div>';
 
     html += '<div class="card" style="margin-bottom:16px;">';
@@ -2750,7 +2785,11 @@
       var all = await getData('pedidos-folga', []);
       all.push({id:'pf'+Date.now(), unit:user.unit, username:user.username, nome:user.nome, dataInicio:inicio, dataFim:fim, motivo:motivo, status:'pendente', criadoEm:new Date().toISOString()});
       var saved = await setData('pedidos-folga', all);
-      if(saved){ logAudit(user.unit, 'Pediu folga', inicio + ' a ' + fim); showToast('Pedido enviado.'); }
+      if(saved){
+        logAudit(user.unit, 'Pediu folga', inicio + ' a ' + fim);
+        showToast('Pedido enviado.');
+        window.__acLastFolgaMsg = 'Oi! Enviei um pedido de folga no sistema: ' + user.nome + ', de ' + inicio + ' a ' + fim + (motivo ? ' (' + motivo + ')' : '') + '. Pode dar uma olhada?';
+      }
       renderAcFolgas(main);
     };
 
@@ -2798,6 +2837,10 @@
     html += '<div class="form-field" style="margin-top:12px;"><label>Motivo (opcional)</label><input class="grid-input wide" style="width:100%;" type="text" id="at-motivo" placeholder="Ex: consulta médica"></div>';
     html += '<div class="form-field" style="margin-top:12px;"><label>Foto ou PDF do atestado (opcional)</label><input type="file" id="at-arquivo" accept="image/*,application/pdf"><div id="at-preview" style="margin-top:8px;"></div></div>';
     html += '<div style="margin-top:12px;"><button class="btn primary" id="at-enviar">Enviar atestado</button></div>';
+    if(window.__acLastAtestadoMsg){
+      html += await botaoAvisarWhatsappHtml(window.__acLastAtestadoMsg, 'at-whats-btn');
+      window.__acLastAtestadoMsg = null;
+    }
     html += '<div style="font-size:11px; color:var(--muted); margin-top:8px;">Visível só pro Dono e Gerente da sua unidade.</div>';
     html += '</div>';
 
@@ -2868,7 +2911,11 @@
       var all = await getData('atestados-colaborador', []);
       all.push({id:'at'+Date.now(), unit:user.unit, username:user.username, nome:user.nome, dataInicio:inicio, dataFim:fim, motivo:motivo, arquivo:pendingArquivo, criadoEm:new Date().toISOString()});
       var saved = await setData('atestados-colaborador', all);
-      if(saved){ logAudit(user.unit, 'Enviou atestado', inicio + ' a ' + fim); showToast('Atestado enviado.'); }
+      if(saved){
+        logAudit(user.unit, 'Enviou atestado', inicio + ' a ' + fim);
+        showToast('Atestado enviado.');
+        window.__acLastAtestadoMsg = 'Oi! Enviei um atestado no sistema: ' + user.nome + ', de ' + inicio + ' a ' + fim + (motivo ? ' (' + motivo + ')' : '') + '. Pode dar uma olhada?';
+      }
       renderAcAtestados(main);
     };
 
@@ -2950,6 +2997,10 @@
     html += '<div class="form-field" style="margin:0;"><label>O que precisa comprar?</label><input class="grid-input wide" style="width:100%;" type="text" id="compra-item" placeholder="Ex: luvas descartáveis"></div>';
     html += '<div class="form-field" style="margin-top:10px;"><label>Detalhes (opcional)</label><input class="grid-input wide" style="width:100%;" type="text" id="compra-detalhe" placeholder="Quantidade, urgência, etc."></div>';
     html += '<div style="margin-top:12px;"><button class="btn primary" id="compra-enviar">Enviar sugestão</button></div>';
+    if(window.__acLastCompraMsg){
+      html += await botaoAvisarWhatsappHtml(window.__acLastCompraMsg, 'compra-whats-btn');
+      window.__acLastCompraMsg = null;
+    }
     html += '</div>';
 
     html += '<div class="card">';
@@ -2994,7 +3045,11 @@
       var all = await getData('sugestoes-compras', []);
       all.push({id:'cp'+Date.now(), unit:user.unit, username:user.username, nome:user.nome, item:item, detalhe:detalhe, status:'pendente', criadoEm:new Date().toISOString()});
       var saved = await setData('sugestoes-compras', all);
-      if(saved){ logAudit(user.unit, 'Sugeriu compra', item); showToast('Sugestão enviada.'); }
+      if(saved){
+        logAudit(user.unit, 'Sugeriu compra', item);
+        showToast('Sugestão enviada.');
+        window.__acLastCompraMsg = 'Oi! Sugeri uma compra no sistema: ' + item + (detalhe ? ' (' + detalhe + ')' : '') + '. Pode dar uma olhada?';
+      }
       renderAcCompras(main);
     };
 
@@ -3084,11 +3139,12 @@
     html += '<div class="grid-2">';
 
     var ratesByUnit = await Promise.all(UNITS.map(function(u){ return getData('rates-' + u.id, DEFAULT_RATES); }));
-    var cfgLoaded = await Promise.all([getData('motoboy-cadastro', []), getData('colaboradores-avaliacao', []), getData('insumos-precos', {}), getConteudo()]);
+    var cfgLoaded = await Promise.all([getData('motoboy-cadastro', []), getData('colaboradores-avaliacao', []), getData('insumos-precos', {}), getConteudo(), getData('whatsapp-contatos', [])]);
     var motoboyCadastro = cfgLoaded[0].filter(function(m){ return m.ativo!==false; });
     var colabAvaliacao = cfgLoaded[1].filter(function(c){ return c.ativo!==false; });
     var precosAtuais = cfgLoaded[2];
     var nomesInsumos = await coletarNomesInsumos(cfgLoaded[3]);
+    var whatsappContatos = cfgLoaded[4];
     Object.keys(precosAtuais).forEach(function(n){ if(nomesInsumos.indexOf(n)===-1) nomesInsumos.push(n); });
     nomesInsumos.sort(function(a,b){ return a.localeCompare(b); });
 
@@ -3137,6 +3193,27 @@
 
     html += '<div style="height:16px"></div>';
     html += '<div class="card">';
+    html += '<div style="font-weight:600; font-size:14px;">Contatos de WhatsApp para avisos</div>';
+    html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Aparecem como botão "Avisar por WhatsApp" em pedidos de folga, atestados e sugestões de compra. Coloca o número com DDI+DDD, só números (ex: 5541999998888).</div>';
+    if(whatsappContatos.length===0){
+      html += '<div class="empty">Nenhum contato cadastrado ainda.</div>';
+    } else {
+      html += '<table style="margin-top:10px;"><thead><tr><th>Nome</th><th>Telefone</th><th></th></tr></thead><tbody>';
+      whatsappContatos.forEach(function(c){
+        html += '<tr><td>' + escapeHtml(c.nome) + '</td><td class="num-cell">' + escapeHtml(c.telefone) + '</td>' +
+          '<td><button class="btn" data-remove-whats="' + c.id + '">Remover</button></td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '<div class="add-row-bar">';
+    html += '<input class="grid-input wide" type="text" id="whats-nome" placeholder="Nome, ex: Igor">';
+    html += '<input class="grid-input wide" type="text" id="whats-telefone" placeholder="Ex: 5541999998888">';
+    html += '<button class="btn primary" id="whats-add">Adicionar contato</button>';
+    html += '</div>';
+    html += '</div>';
+
+    html += '<div style="height:16px"></div>';
+    html += '<div class="card">';
     html += '<div style="font-weight:600; font-size:14px;">Preços dos insumos</div>';
     html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Usado pra calcular o custo estimado de cada ficha técnica e de cada lote registrado. Preencha o preço e a unidade a que ele se refere (ex: preço por kg).</div>';
     var buscaInsumo = window.__cfgBuscaInsumo || '';
@@ -3176,6 +3253,45 @@
     html += '<div style="margin-top:14px;"><button class="btn primary" id="nav-perm-save">Salvar acessos</button></div>';
     html += '</div>';
 
+    var cargosAtuais = await getData('cargos-personalizados', []);
+    var editandoCargoId = window.__cargoEditandoId || null;
+    var editandoCargo = editandoCargoId ? cargosAtuais.find(function(c){ return c.id===editandoCargoId; }) : null;
+
+    html += '<div style="height:16px"></div><div class="card">';
+    html += '<div style="font-weight:600; font-size:14px;">Cargos personalizados</div>';
+    html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Crie títulos de cargo com o nome que quiser (ex: Líder Cozinha, Líder Salão, Motoboys) e escolha exatamente quais telas cada um enxerga. O "nível base" controla as regras internas do sistema (quem aprova folga, quem vê atestado, etc.) — o nome do cargo é só o rótulo.</div>';
+
+    if(cargosAtuais.length>0){
+      html += '<table style="margin-top:12px;"><thead><tr><th>Cargo</th><th>Nível base</th><th>Telas liberadas</th><th></th></tr></thead><tbody>';
+      cargosAtuais.forEach(function(c){
+        html += '<tr><td>' + escapeHtml(c.nome) + '</td><td>' + labelRole(c.nivelBase) + '</td><td class="num-cell">' + (c.navIds||[]).length + '</td>' +
+          '<td><button class="btn" data-cargo-edit="' + c.id + '" style="padding:4px 9px; font-size:11.5px;">Editar</button> ' +
+          '<button class="btn" data-cargo-remove="' + c.id + '" style="padding:4px 9px; font-size:11.5px;">Remover</button></td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+
+    html += '<div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--line);">';
+    html += '<div style="font-weight:600; font-size:13px; margin-bottom:10px;">' + (editandoCargo ? 'Editando: ' + escapeHtml(editandoCargo.nome) : 'Novo cargo') + '</div>';
+    html += '<div class="form-grid" style="grid-template-columns:1fr 1fr;">';
+    html += formField('text','cargo-nome','Nome do cargo','Ex: Líder Cozinha', editandoCargo ? editandoCargo.nome : null);
+    html += '<div class="form-field" style="margin:0;"><label>Nível base</label><select id="cargo-nivel">' + CONFIGURABLE_ROLES.map(function(r){ return '<option value="' + r + '"' + (editandoCargo && editandoCargo.nivelBase===r ? ' selected' : '') + '>' + labelRole(r) + '</option>'; }).join('') + '</select></div>';
+    html += '</div>';
+    html += '<div style="margin-top:12px;"><label style="display:block; font-size:11.5px; color:var(--muted); font-weight:600; margin-bottom:8px;">Telas que esse cargo pode acessar</label>';
+    html += '<div style="display:flex; flex-wrap:wrap; gap:10px;">';
+    NAV.filter(function(n){ return n.id!=='config'; }).forEach(function(n){
+      var marcado = editandoCargo ? (editandoCargo.navIds||[]).indexOf(n.id)!==-1 : false;
+      html += '<label style="display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer; border:1px solid var(--line); border-radius:8px; padding:6px 10px;">' +
+        '<input type="checkbox" data-cargo-nav="' + n.id + '"' + (marcado?' checked':'') + '> ' + n.label +
+      '</label>';
+    });
+    html += '</div></div>';
+    html += '<div style="margin-top:14px; display:flex; gap:10px;"><button class="btn primary" id="cargo-save">' + (editandoCargo ? 'Salvar edição' : 'Criar cargo') + '</button>';
+    if(editandoCargo){ html += '<button class="btn" id="cargo-cancel">Cancelar</button>'; }
+    html += '</div>';
+    html += '</div>';
+    html += '</div>';
+
     html += '<div style="height:16px"></div><div class="card">';
     html += '<div style="font-weight:600; font-size:14px;">Backup</div>';
     html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Baixa uma cópia completa de todos os dados do sistema (motoboys, caixa, colaboradores, escala, usuários, auditoria). Guarde periodicamente como segurança extra.</div>';
@@ -3204,6 +3320,29 @@
         renderConfig(main);
       };
     });
+
+    main.querySelectorAll('[data-remove-whats]').forEach(function(btn){
+      btn.onclick = async function(){
+        if(!(await showConfirm('Remover este contato?', 'Remover'))) return;
+        var id = btn.getAttribute('data-remove-whats');
+        var all = await getData('whatsapp-contatos', []);
+        all = all.filter(function(c){ return c.id!==id; });
+        var saved = await setData('whatsapp-contatos', all);
+        if(saved){ logAudit('Ambas as unidades', 'Removeu contato de WhatsApp', ''); }
+        renderConfig(main);
+      };
+    });
+
+    document.getElementById('whats-add').onclick = async function(){
+      var nome = document.getElementById('whats-nome').value.trim();
+      var telefone = document.getElementById('whats-telefone').value.trim().replace(/\D/g,'');
+      if(!nome || !telefone){ showToast('Preencha nome e telefone.', 'error'); return; }
+      var all = await getData('whatsapp-contatos', []);
+      all.push({id:'wa'+Date.now(), nome:nome, telefone:telefone});
+      var saved = await setData('whatsapp-contatos', all);
+      if(saved){ logAudit('Ambas as unidades', 'Cadastrou contato de WhatsApp', nome); }
+      renderConfig(main);
+    };
 
     document.getElementById('colab-cad-add').onclick = async function(){
       var nome = document.getElementById('colab-cad-nome').value.trim();
@@ -3264,10 +3403,53 @@
       }
     };
 
+    document.getElementById('cargo-save').onclick = async function(){
+      var nome = document.getElementById('cargo-nome').value.trim();
+      var nivelBase = document.getElementById('cargo-nivel').value;
+      if(!nome){ showToast('Dê um nome ao cargo.', 'error'); return; }
+      var navIds = [];
+      main.querySelectorAll('[data-cargo-nav]').forEach(function(cb){ if(cb.checked) navIds.push(cb.getAttribute('data-cargo-nav')); });
+      var all = await getData('cargos-personalizados', []);
+      if(editandoCargo){
+        var idx = all.findIndex(function(c){ return c.id===editandoCargo.id; });
+        if(idx>-1){ all[idx].nome = nome; all[idx].nivelBase = nivelBase; all[idx].navIds = navIds; }
+        var saved1 = await setData('cargos-personalizados', all);
+        if(saved1){ logAudit('Ambas as unidades', 'Editou cargo', nome); }
+      } else {
+        all.push({id:'cg'+Date.now(), nome:nome, nivelBase:nivelBase, navIds:navIds});
+        var saved2 = await setData('cargos-personalizados', all);
+        if(saved2){ logAudit('Ambas as unidades', 'Criou cargo', nome); }
+      }
+      window.__cargoEditandoId = null;
+      cargosPersonalizados = all;
+      renderConfig(main);
+    };
+
+    var cargoCancelBtn = document.getElementById('cargo-cancel');
+    if(cargoCancelBtn){ cargoCancelBtn.onclick = function(){ window.__cargoEditandoId = null; renderConfig(main); }; }
+
+    main.querySelectorAll('[data-cargo-edit]').forEach(function(btn){
+      btn.onclick = function(){ window.__cargoEditandoId = btn.getAttribute('data-cargo-edit'); renderConfig(main); };
+    });
+
+    main.querySelectorAll('[data-cargo-remove]').forEach(function(btn){
+      btn.onclick = async function(){
+        if(!(await showConfirm('Remover este cargo? Usuários que já têm esse cargo continuam com o nível base, mas perdem o nome personalizado e voltam ao acesso padrão do nível.', 'Remover'))) return;
+        var id = btn.getAttribute('data-cargo-remove');
+        var all = await getData('cargos-personalizados', []);
+        var target = all.find(function(c){ return c.id===id; });
+        all = all.filter(function(c){ return c.id!==id; });
+        var saved = await setData('cargos-personalizados', all);
+        if(saved && target){ logAudit('Ambas as unidades', 'Removeu cargo', target.nome); }
+        cargosPersonalizados = all;
+        renderConfig(main);
+      };
+    });
+
     var BACKUP_KEYS = ['motoboys-entries','rates-unidade1','rates-unidade2','motoboy-schedule','motoboy-cadastro',
       'motoboys-turno-status','motoboys-turno-removidos','caixa-fechamento','caixa-fechamento-status','conteudo','nav-permissions','avaliacoes',
       'colaboradores-avaliacao','insumos-cadastro','insumos-nomes','insumos-precos','checklist-status','audit-log','users-list',
-      'pedidos-folga','atestados-colaborador','sugestoes-ideias','sugestoes-compras'];
+      'pedidos-folga','atestados-colaborador','sugestoes-ideias','sugestoes-compras','whatsapp-contatos','cargos-personalizados'];
 
     document.getElementById('backup-export').onclick = async function(){
       var values = await Promise.all(BACKUP_KEYS.map(function(k){ return getData(k, null); }));
@@ -3380,6 +3562,8 @@
   async function renderUsuarios(main){
     var users = await getData('users-list', []);
     var creatableRoles = user.role==='dono' ? ROLES : ROLES.filter(function(r){ return r.id==='supervisor' || r.id==='equipe' || r.id==='caixa'; });
+    var creatableRoleIds = creatableRoles.map(function(r){ return r.id; });
+    var cargosDisponiveis = cargosPersonalizados.filter(function(c){ return creatableRoleIds.indexOf(c.nivelBase)!==-1; });
 
     var html = pageHead('Usuários', user.role==='dono' ? 'Cadastro de todos os níveis, com login próprio' : 'Cadastro de Supervisor, Equipe e Caixa da sua unidade');
 
@@ -3396,7 +3580,10 @@
     html += formField('text','u-nome','Nome','Nome completo');
     html += formField('text','u-username','Usuário (login)','ex: joao');
     html += formField('password','u-password','Senha inicial','mínimo 4 caracteres');
-    html += '<div class="form-field"><label>Nível</label><select id="u-role">' + creatableRoles.map(function(r){return '<option value="'+r.id+'">'+r.label+'</option>';}).join('') + '</select></div>';
+    html += '<div class="form-field"><label>Cargo / nível</label><select id="u-role">' +
+      '<optgroup label="Níveis padrão">' + creatableRoles.map(function(r){return '<option value="role:'+r.id+'">'+r.label+'</option>';}).join('') + '</optgroup>' +
+      (cargosDisponiveis.length>0 ? '<optgroup label="Cargos personalizados">' + cargosDisponiveis.map(function(c){return '<option value="cargo:'+c.id+'">'+escapeHtml(c.nome)+' ('+labelRole(c.nivelBase)+')</option>';}).join('') + '</optgroup>' : '') +
+      '</select></div>';
     if(user.role==='dono'){
       html += '<div class="form-field"><label>Unidade</label><select id="u-unit">' + UNITS.map(function(u2){return '<option value="'+u2.id+'">'+u2.label+'</option>';}).join('') + '</select></div>';
     }
@@ -3411,9 +3598,9 @@
     if(visible.length===0){
       html += '<div class="empty">Nenhum usuário cadastrado ainda.</div>';
     } else {
-      html += '<table><thead><tr><th>Nome</th><th>Usuário</th><th>Nível</th><th>Unidade</th><th></th></tr></thead><tbody>';
+      html += '<table><thead><tr><th>Nome</th><th>Usuário</th><th>Cargo / nível</th><th>Unidade</th><th></th></tr></thead><tbody>';
       visible.forEach(function(u2){
-        html += '<tr><td>' + escapeHtml(u2.nome) + '</td><td class="num-cell">' + escapeHtml(u2.username||'—') + '</td><td>' + labelRole(u2.role) + '</td><td>' + labelUnit(u2.unit) + '</td>' +
+        html += '<tr><td>' + escapeHtml(u2.nome) + '</td><td class="num-cell">' + escapeHtml(u2.username||'—') + '</td><td>' + escapeHtml(rotuloNivelUsuario(u2)) + '</td><td>' + labelUnit(u2.unit) + '</td>' +
           '<td><button class="btn" data-reset-pw="' + u2.id + '">Redefinir senha</button> <button class="btn" data-remove-user="' + u2.id + '" style="border-color:var(--warn-txt); color:var(--warn-txt); margin-left:6px;">Revogar acesso</button></td></tr>';
       });
       html += '</tbody></table>';
@@ -3446,15 +3633,25 @@
       var password = document.getElementById('u-password').value;
       if(!nome || !username || !password){ errEl.textContent = 'Preencha nome, usuário e senha.'; return; }
       if(password.length<4){ errEl.textContent = 'Senha muito curta (mínimo 4 caracteres).'; return; }
-      var role = document.getElementById('u-role').value;
+      var selecao = document.getElementById('u-role').value;
+      var role, cargoId = null, cargoNome = null;
+      if(selecao.indexOf('cargo:')===0){
+        var cargo = cargosPersonalizados.find(function(c){ return c.id===selecao.slice(6); });
+        if(!cargo){ errEl.textContent = 'Esse cargo não existe mais, escolha outro.'; return; }
+        role = cargo.nivelBase;
+        cargoId = cargo.id;
+        cargoNome = cargo.nome;
+      } else {
+        role = selecao.slice(5);
+      }
       var unit = user.role==='dono' ? document.getElementById('u-unit').value : user.unit;
       var all = await getData('users-list', []);
       var dupUsername = all.some(function(u2){ return u2.ativo!==false && u2.username && u2.username.toLowerCase()===username; });
       if(dupUsername){ errEl.textContent = 'Esse nome de usuário já existe. Escolha outro.'; return; }
       var hash = await hashPassword(password);
-      all.push({id:'u'+Date.now(), nome:nome, username:username, passwordHash:hash, role:role, unit:unit, ativo:true});
+      all.push({id:'u'+Date.now(), nome:nome, username:username, passwordHash:hash, role:role, cargoId:cargoId, cargoNome:cargoNome, unit:unit, ativo:true});
       var saved = await setData('users-list', all);
-      if(saved){ logAudit(unit, 'Cadastrou usuário', nome + ' (' + username + ') · ' + labelRole(role)); }
+      if(saved){ logAudit(unit, 'Cadastrou usuário', nome + ' (' + username + ') · ' + (cargoNome || labelRole(role))); }
       renderUsuarios(main);
     };
 
@@ -3510,7 +3707,7 @@
       try{ localStorage.removeItem('cg_session'); }catch(e){}
       return false;
     }
-    user = {nome:found.nome, username:found.username, role:found.role, unit:found.unit};
+    user = {nome:found.nome, username:found.username, role:found.role, unit:found.unit, cargoId:found.cargoId||null, cargoNome:found.cargoNome||null};
     await enterApp();
     return true;
   }
