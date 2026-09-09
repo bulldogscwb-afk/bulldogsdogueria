@@ -154,6 +154,15 @@
   .saldo-pill.pos{background:var(--ok-bg); color:var(--ok-txt);}
   .saldo-pill.neg{background:var(--warn-bg); color:var(--warn-txt);}
 
+  .table-hardgrid{width:100%; border-collapse:collapse; font-size:13px; border:1px solid var(--line);}
+  .table-hardgrid th{text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:700; padding:9px 8px; background:var(--paper); border:1px solid var(--line); white-space:nowrap;}
+  .table-hardgrid td{padding:4px; border:1px solid var(--line); vertical-align:middle;}
+  .table-hardgrid tbody tr:hover{background:var(--paper);}
+  .table-hardgrid .grid-input,.table-hardgrid .grid-select{width:100%; box-sizing:border-box; border:1px solid transparent; border-radius:5px; background:transparent; padding:8px 7px;}
+  .table-hardgrid .grid-input:hover,.table-hardgrid .grid-select:hover{border-color:var(--line); background:var(--card);}
+  .table-hardgrid .grid-input:focus,.table-hardgrid .grid-select:focus{border-color:var(--ember); background:var(--card);}
+  .table-hardgrid .grid-input.wide{width:100%;}
+
   .schedule-table{width:100%; border-collapse:collapse; font-size:12px;}
   .schedule-table th,.schedule-table td{border:1px solid var(--line); padding:6px; vertical-align:top;}
   .schedule-table th{background:var(--paper); font-size:10px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); font-weight:600;}
@@ -292,6 +301,21 @@
     {id:'config', label:'Configurações', icon:'ti-settings', roles:['dono']},
     {id:'usuarios', label:'Usuários', icon:'ti-users', roles:['dono','gerente']}
   ];
+  var SUBTABS_REGISTRY = {
+    motoboys: [
+      {id:'report', label:'Fechamento semanal'},
+      {id:'daily', label:'Conferir lançamento diário'},
+      {id:'cadastro', label:'Motoboys cadastrados'}
+    ]
+  };
+  function subTabsPermitidas(navId, todasIds){
+    if(user.role==='dono') return todasIds;
+    var cargo = cargoDoUsuario();
+    if(cargo && cargo.subTabs && cargo.subTabs[navId]){ return cargo.subTabs[navId]; }
+    if(user.role==='gerente') return todasIds;
+    if(navId==='motoboys') return ['daily'];
+    return todasIds;
+  }
   var DEFAULT_RATES = {dog:8, dell:6, rtDog:4, rtDell:3, diariaAlmoco:10, diariaTarde:10, diariaNoite:0};
   var TURNOS = [
     {id:'almoco', label:'Almoço'},
@@ -781,24 +805,32 @@
   }
 
   async function renderMotoboys(main){
-    if(user.role==='dono' || user.role==='gerente'){
-      var mode = window.__mrMode || 'report';
-      var tabs = '<div class="unit-toggle" style="margin-bottom:14px; width:fit-content;">' +
-        '<button id="mb-tab-report" class="' + (mode==='report'?'active':'') + '">Fechamento semanal</button>' +
-        '<button id="mb-tab-daily" class="' + (mode==='daily'?'active':'') + '">Conferir lançamento diário</button>' +
-        '<button id="mb-tab-cadastro" class="' + (mode==='cadastro'?'active':'') + '">Motoboys cadastrados</button>' +
-        '</div>';
-      main.innerHTML = tabs + '<div id="mb-tab-content"></div>';
-      document.getElementById('mb-tab-report').onclick = function(){ window.__mrMode = 'report'; renderMotoboys(main); };
-      document.getElementById('mb-tab-daily').onclick = function(){ window.__mrMode = 'daily'; renderMotoboys(main); };
-      document.getElementById('mb-tab-cadastro').onclick = function(){ window.__mrMode = 'cadastro'; renderMotoboys(main); };
-      var content = document.getElementById('mb-tab-content');
-      if(mode==='daily'){ await renderMotoboysDaily(content); }
-      else if(mode==='cadastro'){ await renderMotoboysCadastro(content); }
-      else { await renderMotoboysReport(content); }
-    } else {
-      await renderMotoboysDaily(main);
+    var todasAbas = SUBTABS_REGISTRY.motoboys;
+    var permitidas = subTabsPermitidas('motoboys', todasAbas.map(function(t){ return t.id; }));
+    var abasVisiveis = todasAbas.filter(function(t){ return permitidas.indexOf(t.id)!==-1; });
+    if(abasVisiveis.length===0){ main.innerHTML = '<div class="card"><div class="empty">Nenhuma aba liberada para o seu cargo aqui. Peça ao Dono para revisar em Configurações → Cargos personalizados.</div></div>'; return; }
+    var mode = window.__mrMode || abasVisiveis[0].id;
+    if(permitidas.indexOf(mode)===-1) mode = abasVisiveis[0].id;
+
+    if(abasVisiveis.length===1){
+      window.__mrMode = mode;
+      if(mode==='daily'){ await renderMotoboysDaily(main); }
+      else if(mode==='cadastro'){ await renderMotoboysCadastro(main); }
+      else { await renderMotoboysReport(main); }
+      return;
     }
+
+    var tabs = '<div class="unit-toggle" style="margin-bottom:14px; width:fit-content;">' +
+      abasVisiveis.map(function(t){ return '<button data-mb-tab="' + t.id + '" class="' + (mode===t.id?'active':'') + '">' + t.label + '</button>'; }).join('') +
+      '</div>';
+    main.innerHTML = tabs + '<div id="mb-tab-content"></div>';
+    main.querySelectorAll('[data-mb-tab]').forEach(function(btn){
+      btn.onclick = function(){ window.__mrMode = btn.getAttribute('data-mb-tab'); renderMotoboys(main); };
+    });
+    var content = document.getElementById('mb-tab-content');
+    if(mode==='daily'){ await renderMotoboysDaily(content); }
+    else if(mode==='cadastro'){ await renderMotoboysCadastro(content); }
+    else { await renderMotoboysReport(content); }
   }
 
   function turnoStatusKey(unit,date,turno){ return unit + '_' + date + '_' + turno; }
@@ -900,7 +932,7 @@
     html += '<div class="form-field" style="margin:0;"><label for="mb-date">Data</label><input type="date" id="mb-date" value="' + viewDate + '"></div>';
     html += '</div>';
 
-    html += '<div style="overflow-x:auto; margin-top:14px;"><table class="grid-table"><thead><tr>' +
+    html += '<div style="overflow-x:auto; margin-top:14px;"><table class="table-hardgrid"><thead><tr>' +
       '<th>Motoboy</th><th>Origem</th><th>Dog</th><th>Dell</th><th>Rt.dog</th><th>Rt.dell</th><th>Produtos R$</th><th>Dinheiro R$</th><th>Gorjeta R$</th><th>Total a receber</th><th></th></tr></thead><tbody id="mb-tbody">';
 
     rows.forEach(function(e){ html += motoboyRowHtml(e, money(calcTotal(e, rates)), readOnly); });
@@ -3524,10 +3556,27 @@
     NAV.filter(function(n){ return n.id!=='config'; }).forEach(function(n){
       var marcado = editandoCargo ? (editandoCargo.navIds||[]).indexOf(n.id)!==-1 : false;
       html += '<label style="display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer; border:1px solid var(--line); border-radius:8px; padding:6px 10px;">' +
-        '<input type="checkbox" data-cargo-nav="' + n.id + '"' + (marcado?' checked':'') + '> ' + n.label +
+        '<input type="checkbox" class="cargo-nav-check" data-cargo-nav="' + n.id + '"' + (marcado?' checked':'') + '> ' + n.label +
       '</label>';
     });
     html += '</div></div>';
+
+    Object.keys(SUBTABS_REGISTRY).forEach(function(navId){
+      var navItem = NAV.find(function(n){ return n.id===navId; });
+      var marcadoPagina = editandoCargo ? (editandoCargo.navIds||[]).indexOf(navId)!==-1 : false;
+      var subSalvas = (editandoCargo && editandoCargo.subTabs && editandoCargo.subTabs[navId]) || null;
+      html += '<div class="cargo-subtabs-block" data-subtabs-for="' + navId + '" style="margin-top:12px; padding:10px 12px; background:var(--paper); border-radius:8px; ' + (marcadoPagina ? '' : 'display:none;') + '">';
+      html += '<label style="display:block; font-size:11.5px; color:var(--muted); font-weight:600; margin-bottom:8px;">Dentro de "' + navItem.label + '", quais abas esse cargo vê (deixe tudo desmarcado para liberar todas)</label>';
+      html += '<div style="display:flex; flex-wrap:wrap; gap:10px;">';
+      SUBTABS_REGISTRY[navId].forEach(function(t){
+        var marcadoSub = subSalvas ? subSalvas.indexOf(t.id)!==-1 : false;
+        html += '<label style="display:flex; align-items:center; gap:6px; font-size:12.5px; cursor:pointer;">' +
+          '<input type="checkbox" data-cargo-subtab="' + navId + '" data-subtab-id="' + t.id + '"' + (marcadoSub?' checked':'') + '> ' + t.label +
+        '</label>';
+      });
+      html += '</div></div>';
+    });
+
     html += '<div style="margin-top:14px; display:flex; gap:10px;"><button class="btn primary" id="cargo-save">' + (editandoCargo ? 'Salvar edição' : 'Criar cargo') + '</button>';
     if(editandoCargo){ html += '<button class="btn" id="cargo-cancel">Cancelar</button>'; }
     html += '</div>';
@@ -3567,7 +3616,7 @@
         arrow.style.color = 'var(--muted)';
         arrow.style.flexShrink = '0';
         titleEl.appendChild(arrow);
-        var collapsed = !!window.__cfgCollapsed[idx];
+        var collapsed = window.__cfgCollapsed.hasOwnProperty(idx) ? !!window.__cfgCollapsed[idx] : true;
         if(collapsed){ body.style.display = 'none'; arrow.style.transform = 'rotate(-90deg)'; }
         titleEl.onclick = function(){
           var isHiding = body.style.display !== 'none';
@@ -3693,20 +3742,35 @@
       }
     };
 
+    main.querySelectorAll('.cargo-nav-check').forEach(function(cb){
+      cb.addEventListener('change', function(){
+        var navId = cb.getAttribute('data-cargo-nav');
+        var bloco = main.querySelector('[data-subtabs-for="' + navId + '"]');
+        if(bloco) bloco.style.display = cb.checked ? 'block' : 'none';
+      });
+    });
+
     document.getElementById('cargo-save').onclick = async function(){
       var nome = document.getElementById('cargo-nome').value.trim();
       var nivelBase = document.getElementById('cargo-nivel').value;
       if(!nome){ showToast('Dê um nome ao cargo.', 'error'); return; }
       var navIds = [];
       main.querySelectorAll('[data-cargo-nav]').forEach(function(cb){ if(cb.checked) navIds.push(cb.getAttribute('data-cargo-nav')); });
+      var subTabs = {};
+      Object.keys(SUBTABS_REGISTRY).forEach(function(navId){
+        if(navIds.indexOf(navId)===-1) return;
+        var marcadas = [];
+        main.querySelectorAll('[data-cargo-subtab="' + navId + '"]').forEach(function(cb){ if(cb.checked) marcadas.push(cb.getAttribute('data-subtab-id')); });
+        if(marcadas.length>0) subTabs[navId] = marcadas;
+      });
       var all = await getData('cargos-personalizados', []);
       if(editandoCargo){
         var idx = all.findIndex(function(c){ return c.id===editandoCargo.id; });
-        if(idx>-1){ all[idx].nome = nome; all[idx].nivelBase = nivelBase; all[idx].navIds = navIds; }
+        if(idx>-1){ all[idx].nome = nome; all[idx].nivelBase = nivelBase; all[idx].navIds = navIds; all[idx].subTabs = subTabs; }
         var saved1 = await setData('cargos-personalizados', all);
         if(saved1){ logAudit('Ambas as unidades', 'Editou cargo', nome); }
       } else {
-        all.push({id:'cg'+Date.now(), nome:nome, nivelBase:nivelBase, navIds:navIds});
+        all.push({id:'cg'+Date.now(), nome:nome, nivelBase:nivelBase, navIds:navIds, subTabs:subTabs});
         var saved2 = await setData('cargos-personalizados', all);
         if(saved2){ logAudit('Ambas as unidades', 'Criou cargo', nome); }
       }
