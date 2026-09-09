@@ -2256,15 +2256,17 @@
     var items = await getConteudo();
     var receitas = items.filter(function(it){ return it.tipo==='receita'; });
     var dataAtual = window.__pdData || todayISO();
+    var weekdayHoje = weekdayIdForDate(dataAtual);
     var todosPlanos = await getData('producao-diaria', []);
     var fixas = (await getData('producao-diaria-fixas', [])).filter(function(f){ return f.unit===user.unit || user.role==='dono'; });
     var removidosHoje = (await getData('producao-diaria-removidos', []))
       .filter(function(r){ return r.data===dataAtual && (r.unit===user.unit || user.role==='dono'); })
       .map(function(r){ return r.receitaId; });
 
-    // Auto-provisiona as receitas marcadas como fixas, menos quem foi removido só desse dia
+    // Auto-provisiona as receitas fixas nesse dia da semana, menos quem foi removido só desse dia
     var dirty = false;
     fixas.forEach(function(f){
+      if((f.weekdays||[]).indexOf(weekdayHoje)===-1) return;
       if(removidosHoje.indexOf(f.receitaId)!==-1) return;
       var existe = todosPlanos.some(function(p){ return p.data===dataAtual && p.unit===f.unit && p.receitaId===f.receitaId; });
       if(!existe){
@@ -2278,29 +2280,42 @@
 
     var html = '<div class="card" style="margin-bottom:16px;">';
     html += '<div class="form-field" style="max-width:220px; margin:0;"><label>Data</label><input type="date" id="pd-data" value="' + dataAtual + '"></div>';
+    html += '<div style="font-size:11.5px; color:var(--muted); margin-top:6px;">' + weekdayLabel(weekdayHoje) + '</div>';
     html += '</div>';
 
     if(podePlanejar){
       html += '<div class="card" style="margin-bottom:16px;">';
       html += '<div style="font-weight:600; font-size:14px; margin-bottom:4px;">O que precisa ser feito nesse dia</div>';
-      html += '<div style="font-size:11.5px; color:var(--muted); margin-bottom:12px;">Marque as receitas que precisam ser produzidas hoje. Clique na estrela pra deixar fixa — ela entra sozinha todo dia, sem precisar marcar de novo.</div>';
+      html += '<div style="font-size:11.5px; color:var(--muted); margin-bottom:12px;">Marque as receitas de hoje. Clique na estrela pra escolher em quais dias da semana ela deve entrar sozinha na lista (dá pra mudar quando quiser).</div>';
       if(receitas.length===0){
         html += '<div class="empty">Nenhuma receita cadastrada ainda.</div>';
       } else {
         var planejadosSet = {};
         planosDoDia.forEach(function(p){ planejadosSet[p.receitaId] = true; });
-        var fixasSet = {};
-        fixas.forEach(function(f){ fixasSet[f.receitaId] = true; });
-        html += '<div style="display:flex; flex-direction:column; gap:8px;">';
+        var fixasPorReceita = {};
+        fixas.forEach(function(f){ fixasPorReceita[f.receitaId] = f; });
+        html += '<div style="display:flex; flex-direction:column; gap:4px;">';
         receitas.forEach(function(r){
           var marcado = !!planejadosSet[r.id];
-          var fixo = !!fixasSet[r.id];
-          html += '<div style="display:flex; align-items:center; gap:8px;">';
+          var fixa = fixasPorReceita[r.id];
+          var temDias = fixa && fixa.weekdays && fixa.weekdays.length>0;
+          html += '<div>';
+          html += '<div style="display:flex; align-items:center; gap:8px; padding:4px 0;">';
           html += '<label style="display:flex; align-items:center; gap:8px; font-size:13px; cursor:pointer; flex:1;">' +
             '<input type="checkbox" data-pd-check="' + r.id + '"' + (marcado?' checked':'') + ' style="width:16px; height:16px;">' +
             escapeHtml(r.titulo) + ' <span class="lock-badge" style="background:var(--ok-bg); color:var(--ok-txt);">' + escapeHtml(marcaLabel(r.marca)) + '</span>' +
+            (temDias ? '<span style="font-size:11px; color:var(--muted);">(' + fixa.weekdays.map(function(w){ return weekdayLabel(w).slice(0,3); }).join(', ') + ')</span>' : '') +
           '</label>';
-          html += '<button type="button" class="btn" data-pd-fixar="' + r.id + '" title="' + (fixo ? 'Fixa — clique pra tirar' : 'Deixar fixa todo dia') + '" style="padding:4px 9px; font-size:13px; ' + (fixo ? 'color:var(--ember); border-color:var(--ember);' : '') + '">' + (fixo ? '★' : '☆') + '</button>';
+          html += '<button type="button" class="btn" data-pd-fixar-toggle="' + r.id + '" title="Escolher dias fixos" style="padding:4px 9px; font-size:13px;' + (temDias ? ' color:var(--ember); border-color:var(--ember);' : '') + '">' + (temDias ? '★' : '☆') + '</button>';
+          html += '</div>';
+          html += '<div id="pd-dias-' + r.id + '" style="display:none; padding:8px 0 10px 24px; flex-wrap:wrap; gap:10px;">';
+          WEEKDAY_DISPLAY_ORDER.forEach(function(wd){
+            var marcadoDia = fixa && fixa.weekdays && fixa.weekdays.indexOf(wd)!==-1;
+            html += '<label style="display:inline-flex; align-items:center; gap:4px; font-size:12px; margin-right:10px; cursor:pointer;">' +
+              '<input type="checkbox" data-pd-dia="' + r.id + '" data-dia-valor="' + wd + '"' + (marcadoDia?' checked':'') + '> ' + weekdayLabel(wd).slice(0,3) +
+            '</label>';
+          });
+          html += '</div>';
           html += '</div>';
         });
         html += '</div>';
@@ -2362,7 +2377,7 @@
               var saved2 = await setData('producao-diaria', all);
               if(saved2){ logAudit(user.unit, 'Removeu do planejamento do dia', receita.titulo + ' · ' + dataAtual); }
             }
-            var ehFixa = fixas.some(function(f){ return f.receitaId===receitaId; });
+            var ehFixa = fixas.some(function(f){ return f.receitaId===receitaId && (f.weekdays||[]).indexOf(weekdayHoje)!==-1; });
             if(ehFixa){
               var removidos2 = await getData('producao-diaria-removidos', []);
               removidos2.push({unit:user.unit, data:dataAtual, receitaId:receitaId});
@@ -2373,23 +2388,34 @@
         });
       });
 
-      main.querySelectorAll('[data-pd-fixar]').forEach(function(btn){
-        btn.onclick = async function(){
-          var receitaId = btn.getAttribute('data-pd-fixar');
+      main.querySelectorAll('[data-pd-fixar-toggle]').forEach(function(btn){
+        btn.onclick = function(){
+          var id = btn.getAttribute('data-pd-fixar-toggle');
+          var painel = document.getElementById('pd-dias-' + id);
+          painel.style.display = (painel.style.display==='none') ? 'flex' : 'none';
+        };
+      });
+
+      main.querySelectorAll('[data-pd-dia]').forEach(function(chk){
+        chk.addEventListener('change', async function(){
+          var receitaId = chk.getAttribute('data-pd-dia');
+          var dia = chk.getAttribute('data-dia-valor');
           var receita = receitas.find(function(r){ return r.id===receitaId; });
           var all = await getData('producao-diaria-fixas', []);
           var idx = all.findIndex(function(f){ return f.unit===user.unit && f.receitaId===receitaId; });
-          if(idx>-1){
-            all.splice(idx,1);
-            var saved1 = await setData('producao-diaria-fixas', all);
-            if(saved1){ logAudit(user.unit, 'Tirou receita fixa da produção diária', receita.titulo); }
+          if(idx===-1){
+            all.push({id:'pdf'+Date.now()+Math.random().toString(16).slice(2), unit:user.unit, receitaId:receitaId, receitaTitulo:receita.titulo, weekdays:[dia]});
           } else {
-            all.push({id:'pdf'+Date.now()+Math.random().toString(16).slice(2), unit:user.unit, receitaId:receitaId, receitaTitulo:receita.titulo});
-            var saved2 = await setData('producao-diaria-fixas', all);
-            if(saved2){ logAudit(user.unit, 'Marcou receita fixa na produção diária', receita.titulo); }
+            var dias = all[idx].weekdays || [];
+            if(chk.checked){ if(dias.indexOf(dia)===-1) dias.push(dia); }
+            else { dias = dias.filter(function(d){ return d!==dia; }); }
+            if(dias.length===0){ all.splice(idx,1); }
+            else { all[idx].weekdays = dias; }
           }
+          var saved = await setData('producao-diaria-fixas', all);
+          if(saved){ logAudit(user.unit, 'Atualizou dias fixos de produção', receita.titulo + ' · ' + weekdayLabel(dia)); }
           renderProducaoDia(main, podePlanejar);
-        };
+        });
       });
     }
 
