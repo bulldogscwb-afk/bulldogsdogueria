@@ -306,6 +306,12 @@
       {id:'report', label:'Fechamento semanal'},
       {id:'daily', label:'Conferir lançamento diário'},
       {id:'cadastro', label:'Motoboys cadastrados'}
+    ],
+    conteudo: [
+      {id:'receitas', label:'Receitas'},
+      {id:'producaodia', label:'Produção do dia'},
+      {id:'rendimento', label:'Registrar rendimento'},
+      {id:'verificacao', label:'Verificação geral'}
     ]
   };
   function subTabsPermitidas(navId, todasIds){
@@ -314,6 +320,7 @@
     if(cargo && cargo.subTabs && cargo.subTabs[navId]){ return cargo.subTabs[navId]; }
     if(user.role==='gerente') return todasIds;
     if(navId==='motoboys') return ['daily'];
+    if(navId==='conteudo') return todasIds.filter(function(id){ return id!=='verificacao'; });
     return todasIds;
   }
   var DEFAULT_RATES = {dog:8, dell:6, rtDog:4, rtDell:3, diariaAlmoco:10, diariaTarde:10, diariaNoite:0};
@@ -1744,20 +1751,24 @@
   }
 
   async function renderConteudo(main){
-    var tab = window.__ctTab || 'receitas';
+    var todasAbas = SUBTABS_REGISTRY.conteudo;
+    var permitidas = subTabsPermitidas('conteudo', todasAbas.map(function(t){ return t.id; }));
+    var abasVisiveis = todasAbas.filter(function(t){ return permitidas.indexOf(t.id)!==-1; });
+    if(abasVisiveis.length===0){ main.innerHTML = '<div class="card"><div class="empty">Nenhuma aba liberada para o seu cargo aqui. Peça ao Dono para revisar em Configurações → Cargos personalizados.</div></div>'; return; }
+    var tab = window.__ctTab || abasVisiveis[0].id;
     if(tab==='processos') tab = 'receitas'; // aba desativada a pedido — evita ficar preso num estado antigo
-    var podeVerificar = (user.role==='dono' || user.role==='gerente');
+    if(permitidas.indexOf(tab)===-1) tab = abasVisiveis[0].id;
     var podePlanejar = (user.role==='dono' || user.role==='gerente' || user.role==='supervisor');
     var subtitulos = {receitas:'Fichas técnicas por marca', producaodia:'O que precisa ser feito hoje', rendimento:'Registre o rendimento de uma produção', verificacao:'Controle geral dos rendimentos registrados'};
     var html = pageHead('Receitas & Processos', subtitulos[tab] || '');
-    html += '<div class="unit-toggle" style="margin-bottom:20px; width:fit-content; flex-wrap:wrap;">';
-    html += '<button data-ct-tab="receitas" class="' + (tab==='receitas'?'active':'') + '">Receitas</button>';
-    html += '<button data-ct-tab="producaodia" class="' + (tab==='producaodia'?'active':'') + '">Produção do dia</button>';
-    html += '<button data-ct-tab="rendimento" class="' + (tab==='rendimento'?'active':'') + '">Registrar rendimento</button>';
-    if(podeVerificar){
-      html += '<button data-ct-tab="verificacao" class="' + (tab==='verificacao'?'active':'') + '">Verificação geral</button>';
+
+    if(abasVisiveis.length>1){
+      html += '<div class="unit-toggle" style="margin-bottom:20px; width:fit-content; flex-wrap:wrap;">';
+      abasVisiveis.forEach(function(t){
+        html += '<button data-ct-tab="' + t.id + '" class="' + (tab===t.id?'active':'') + '">' + t.label + '</button>';
+      });
+      html += '</div>';
     }
-    html += '</div>';
     html += '<div id="ct-tab-content"></div>';
     main.innerHTML = html;
 
@@ -1768,7 +1779,7 @@
     var content = document.getElementById('ct-tab-content');
     if(tab==='rendimento'){ await renderRendimentoTab(content); }
     else if(tab==='producaodia'){ await renderProducaoDia(content, podePlanejar); }
-    else if(tab==='verificacao' && podeVerificar){ await renderVerificacaoTab(content); }
+    else if(tab==='verificacao'){ await renderVerificacaoTab(content); }
     else { await renderFichasTab(content, 'receita'); }
   }
 
