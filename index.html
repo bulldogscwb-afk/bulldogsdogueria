@@ -277,9 +277,9 @@
     {id:'fechamento', label:'Fechamento de caixa', icon:'ti-cash', roles:['dono','gerente','caixa']},
     {id:'documentos', label:'Documentos', icon:'ti-folder', roles:['dono','gerente']},
     {id:'conteudo', label:'Receitas & Processos', icon:'ti-book-2', roles:['dono','gerente','supervisor','equipe','caixa']},
-    {id:'checklists', label:'Checklists', icon:'ti-checkbox', roles:['dono','gerente','supervisor','equipe']},
-    {id:'area-colaborador', label:'Área do Colaborador', icon:'ti-user-heart', roles:['dono','gerente','supervisor','equipe','caixa']},
-    {id:'avaliacoes', label:'Avaliações', icon:'ti-star', roles:['dono','gerente','supervisor']},
+    // {id:'checklists', label:'Checklists', icon:'ti-checkbox', roles:['dono','gerente','supervisor','equipe']}, // desativado a pedido — reative removendo o comentário
+    // {id:'area-colaborador', label:'Área do Colaborador', icon:'ti-user-heart', roles:['dono','gerente','supervisor','equipe','caixa']}, // desativado a pedido — reative removendo o comentário
+    // {id:'avaliacoes', label:'Avaliações', icon:'ti-star', roles:['dono','gerente','supervisor']}, // desativado a pedido — reative removendo o comentário
     {id:'auditoria', label:'Auditoria', icon:'ti-history', roles:['dono','gerente']},
     {id:'config', label:'Configurações', icon:'ti-settings', roles:['dono']},
     {id:'usuarios', label:'Usuários', icon:'ti-users', roles:['dono','gerente']}
@@ -697,9 +697,9 @@
     else if(currentPage === 'fechamento') await renderFechamento(main);
     else if(currentPage === 'documentos') await renderDocumentos(main);
     else if(currentPage === 'conteudo') await renderConteudo(main);
-    else if(currentPage === 'checklists') await renderChecklists(main);
-    else if(currentPage === 'area-colaborador') await renderAreaColaborador(main);
-    else if(currentPage === 'avaliacoes') await renderAvaliacoes(main);
+    // else if(currentPage === 'checklists') await renderChecklists(main); // desativado a pedido
+    // else if(currentPage === 'area-colaborador') await renderAreaColaborador(main); // desativado a pedido
+    // else if(currentPage === 'avaliacoes') await renderAvaliacoes(main); // desativado a pedido
     else if(currentPage === 'auditoria') await renderAuditoria(main);
     else if(currentPage === 'config') await renderConfig(main);
     else if(currentPage === 'usuarios') await renderUsuarios(main);
@@ -1716,12 +1716,14 @@
 
   async function renderConteudo(main){
     var tab = window.__ctTab || 'receitas';
+    if(tab==='processos') tab = 'receitas'; // aba desativada a pedido — evita ficar preso num estado antigo
     var podeVerificar = (user.role==='dono' || user.role==='gerente');
-    var subtitulos = {receitas:'Fichas técnicas por marca', processos:'Rotinas e processos por marca', rendimento:'Registre o rendimento de uma produção', verificacao:'Controle geral dos rendimentos registrados'};
+    var podePlanejar = (user.role==='dono' || user.role==='gerente' || user.role==='supervisor');
+    var subtitulos = {receitas:'Fichas técnicas por marca', producaodia:'O que precisa ser feito hoje', rendimento:'Registre o rendimento de uma produção', verificacao:'Controle geral dos rendimentos registrados'};
     var html = pageHead('Receitas & Processos', subtitulos[tab] || '');
     html += '<div class="unit-toggle" style="margin-bottom:20px; width:fit-content; flex-wrap:wrap;">';
     html += '<button data-ct-tab="receitas" class="' + (tab==='receitas'?'active':'') + '">Receitas</button>';
-    html += '<button data-ct-tab="processos" class="' + (tab==='processos'?'active':'') + '">Processos</button>';
+    html += '<button data-ct-tab="producaodia" class="' + (tab==='producaodia'?'active':'') + '">Produção do dia</button>';
     html += '<button data-ct-tab="rendimento" class="' + (tab==='rendimento'?'active':'') + '">Registrar rendimento</button>';
     if(podeVerificar){
       html += '<button data-ct-tab="verificacao" class="' + (tab==='verificacao'?'active':'') + '">Verificação geral</button>';
@@ -1736,8 +1738,9 @@
 
     var content = document.getElementById('ct-tab-content');
     if(tab==='rendimento'){ await renderRendimentoTab(content); }
+    else if(tab==='producaodia'){ await renderProducaoDia(content, podePlanejar); }
     else if(tab==='verificacao' && podeVerificar){ await renderVerificacaoTab(content); }
-    else { await renderFichasTab(content, tab==='processos' ? 'processo' : 'receita'); }
+    else { await renderFichasTab(content, 'receita'); }
   }
 
   async function renderFichasTab(main, tipoFixo){
@@ -2249,6 +2252,122 @@
   }
 
 
+  async function renderProducaoDia(main, podePlanejar){
+    var items = await getConteudo();
+    var receitas = items.filter(function(it){ return it.tipo==='receita'; });
+    var dataAtual = window.__pdData || todayISO();
+    var todosPlanos = await getData('producao-diaria', []);
+    var planosDoDia = todosPlanos.filter(function(p){ return p.data===dataAtual && (p.unit===user.unit || user.role==='dono'); });
+
+    var html = '<div class="card" style="margin-bottom:16px;">';
+    html += '<div class="form-field" style="max-width:220px; margin:0;"><label>Data</label><input type="date" id="pd-data" value="' + dataAtual + '"></div>';
+    html += '</div>';
+
+    if(podePlanejar){
+      html += '<div class="card" style="margin-bottom:16px;">';
+      html += '<div style="font-weight:600; font-size:14px; margin-bottom:4px;">O que precisa ser feito nesse dia</div>';
+      html += '<div style="font-size:11.5px; color:var(--muted); margin-bottom:12px;">Marque as receitas que precisam ser produzidas — a equipe vê essa lista assim que entrar.</div>';
+      if(receitas.length===0){
+        html += '<div class="empty">Nenhuma receita cadastrada ainda.</div>';
+      } else {
+        var planejadosSet = {};
+        planosDoDia.forEach(function(p){ planejadosSet[p.receitaId] = true; });
+        html += '<div style="display:flex; flex-direction:column; gap:8px;">';
+        receitas.forEach(function(r){
+          var marcado = !!planejadosSet[r.id];
+          html += '<label style="display:flex; align-items:center; gap:8px; font-size:13px; cursor:pointer;">' +
+            '<input type="checkbox" data-pd-check="' + r.id + '"' + (marcado?' checked':'') + ' style="width:16px; height:16px;">' +
+            escapeHtml(r.titulo) + ' <span class="lock-badge" style="background:var(--ok-bg); color:var(--ok-txt);">' + escapeHtml(marcaLabel(r.marca)) + '</span>' +
+          '</label>';
+        });
+        html += '</div>';
+      }
+      html += '</div>';
+    }
+
+    html += '<div class="card">';
+    html += '<div style="font-weight:600; font-size:14px; margin-bottom:10px;">Lista de produção — ' + dataAtual + '</div>';
+    if(planosDoDia.length===0){
+      html += '<div class="empty">Nada planejado pra esse dia ainda.</div>';
+    } else {
+      var pendentes = planosDoDia.filter(function(p){ return !p.feito; });
+      var feitos = planosDoDia.filter(function(p){ return p.feito; });
+      html += '<div style="display:flex; flex-direction:column; gap:8px;">';
+      pendentes.concat(feitos).forEach(function(p){
+        html += '<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border:1px solid var(--line); border-radius:8px;' + (p.feito ? ' opacity:.6;' : '') + '">';
+        html += '<label style="display:flex; align-items:center; gap:10px; cursor:pointer; flex:1;">' +
+          '<input type="checkbox" data-pd-feito="' + p.id + '"' + (p.feito?' checked':'') + ' style="width:18px; height:18px;">' +
+          '<span style="' + (p.feito ? 'text-decoration:line-through;' : '') + 'font-weight:600; font-size:13.5px;">' + escapeHtml(p.receitaTitulo) + '</span>' +
+          (p.feito ? '<span style="font-size:11px; color:var(--muted);">feito por ' + escapeHtml(p.feitoPor||'') + '</span>' : '') +
+        '</label>';
+        if(!p.feito){
+          html += '<button class="btn primary" data-pd-registrar="' + p.receitaId + '" style="padding:6px 10px; font-size:12px;">Registrar rendimento</button>';
+        }
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+    html += '</div>';
+
+    main.innerHTML = html;
+
+    document.getElementById('pd-data').addEventListener('change', function(){
+      window.__pdData = this.value || todayISO();
+      renderProducaoDia(main, podePlanejar);
+    });
+
+    if(podePlanejar){
+      main.querySelectorAll('[data-pd-check]').forEach(function(chk){
+        chk.addEventListener('change', async function(){
+          var receitaId = chk.getAttribute('data-pd-check');
+          var receita = receitas.find(function(r){ return r.id===receitaId; });
+          var all = await getData('producao-diaria', []);
+          if(chk.checked){
+            var dup = all.some(function(p){ return p.data===dataAtual && p.unit===user.unit && p.receitaId===receitaId; });
+            if(!dup){
+              all.push({id:'pd'+Date.now()+Math.random().toString(16).slice(2), data:dataAtual, unit:user.unit, receitaId:receitaId, receitaTitulo:receita.titulo, feito:false, feitoPor:null, feitoEm:null});
+              var saved1 = await setData('producao-diaria', all);
+              if(saved1){ logAudit(user.unit, 'Planejou produção do dia', receita.titulo + ' · ' + dataAtual); }
+            }
+          } else {
+            var idx = all.findIndex(function(p){ return p.data===dataAtual && p.unit===user.unit && p.receitaId===receitaId; });
+            if(idx>-1){
+              all.splice(idx,1);
+              var saved2 = await setData('producao-diaria', all);
+              if(saved2){ logAudit(user.unit, 'Removeu do planejamento do dia', receita.titulo + ' · ' + dataAtual); }
+            }
+          }
+          renderProducaoDia(main, podePlanejar);
+        });
+      });
+    }
+
+    main.querySelectorAll('[data-pd-feito]').forEach(function(chk){
+      chk.addEventListener('change', async function(){
+        var id = chk.getAttribute('data-pd-feito');
+        var all = await getData('producao-diaria', []);
+        var idx = all.findIndex(function(p){ return p.id===id; });
+        if(idx>-1){
+          all[idx].feito = chk.checked;
+          all[idx].feitoPor = chk.checked ? (user.nome || labelRole(user.role)) : null;
+          all[idx].feitoEm = chk.checked ? new Date().toISOString() : null;
+          var saved = await setData('producao-diaria', all);
+          if(saved){ logAudit(all[idx].unit, chk.checked ? 'Marcou produção como feita' : 'Desmarcou produção', all[idx].receitaTitulo); }
+        }
+        renderProducaoDia(main, podePlanejar);
+      });
+    });
+
+    main.querySelectorAll('[data-pd-registrar]').forEach(function(btn){
+      btn.onclick = function(){
+        window.__rendPreSelectId = btn.getAttribute('data-pd-registrar');
+        window.__ctTab = 'rendimento';
+        renderConteudo(main.parentElement);
+      };
+    });
+  }
+
+
   async function renderRendimentoTab(main){
     var items = await getConteudo();
     __insumoSuggestions = await coletarNomesInsumos(items);
@@ -2511,6 +2630,13 @@
     });
 
     document.getElementById('rend-total').addEventListener('input', atualizarCustoLote);
+
+    if(window.__rendPreSelectId){
+      var itemSelect = document.getElementById('rend-item');
+      itemSelect.value = window.__rendPreSelectId;
+      window.__rendPreSelectId = null;
+      itemSelect.dispatchEvent(new Event('change'));
+    }
 
     document.getElementById('rend-save').onclick = async function(){
       var itemId = document.getElementById('rend-item').value;
@@ -3343,6 +3469,37 @@
 
     main.innerHTML = html;
 
+    (function setupAccordion(){
+      window.__cfgCollapsed = window.__cfgCollapsed || {};
+      main.querySelectorAll('.card').forEach(function(card, idx){
+        var titleEl = card.firstElementChild;
+        if(!titleEl || card.querySelector('.card-arrow')) return;
+        var body = document.createElement('div');
+        while(titleEl.nextSibling){ body.appendChild(titleEl.nextSibling); }
+        card.appendChild(body);
+        titleEl.style.cursor = 'pointer';
+        titleEl.style.display = 'flex';
+        titleEl.style.justifyContent = 'space-between';
+        titleEl.style.alignItems = 'center';
+        titleEl.style.userSelect = 'none';
+        var arrow = document.createElement('span');
+        arrow.className = 'card-arrow';
+        arrow.innerHTML = '<i class="ti ti-chevron-down" aria-hidden="true"></i>';
+        arrow.style.transition = 'transform .15s';
+        arrow.style.color = 'var(--muted)';
+        arrow.style.flexShrink = '0';
+        titleEl.appendChild(arrow);
+        var collapsed = !!window.__cfgCollapsed[idx];
+        if(collapsed){ body.style.display = 'none'; arrow.style.transform = 'rotate(-90deg)'; }
+        titleEl.onclick = function(){
+          var isHiding = body.style.display !== 'none';
+          body.style.display = isHiding ? 'none' : '';
+          arrow.style.transform = isHiding ? 'rotate(-90deg)' : '';
+          window.__cfgCollapsed[idx] = isHiding;
+        };
+      });
+    })();
+
     main.querySelectorAll('[data-remove-colab-cad]').forEach(function(btn){
       btn.onclick = async function(){
         if(!(await showConfirm('Remover este colaborador do cadastro?', 'Remover'))) return;
@@ -3504,7 +3661,7 @@
     var BACKUP_KEYS = ['motoboys-entries','rates-unidade1','rates-unidade2','motoboy-schedule','motoboy-cadastro',
       'motoboys-turno-status','motoboys-turno-removidos','caixa-fechamento','caixa-fechamento-status','conteudo','nav-permissions','avaliacoes',
       'colaboradores-avaliacao','insumos-cadastro','insumos-nomes','insumos-precos','checklist-status','audit-log','users-list',
-      'pedidos-folga','atestados-colaborador','sugestoes-ideias','sugestoes-compras','whatsapp-contatos','cargos-personalizados'];
+      'pedidos-folga','atestados-colaborador','sugestoes-ideias','sugestoes-compras','whatsapp-contatos','cargos-personalizados','producao-diaria'];
 
     document.getElementById('backup-export').onclick = async function(){
       var values = await Promise.all(BACKUP_KEYS.map(function(k){ return getData(k, null); }));
