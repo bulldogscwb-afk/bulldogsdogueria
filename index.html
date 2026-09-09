@@ -1695,15 +1695,22 @@
   }
 
   async function botaoAvisarWhatsappHtml(mensagem, containerId){
-    var contatos = (await getData('whatsapp-contatos', [])).filter(function(c){ return c.telefone; });
-    if(contatos.length===0) return '';
+    var contatos = await getData('whatsapp-contatos', []);
+    var validos = contatos.filter(function(c){ return (c.tipo==='grupo' && c.link) || (c.tipo!=='grupo' && c.telefone); });
+    if(validos.length===0) return '';
     var html = '<div id="' + containerId + '" style="margin-top:12px;">';
     html += '<div style="font-size:11.5px; color:var(--muted); margin-bottom:6px;">Avisar por WhatsApp:</div>';
     html += '<div style="display:flex; gap:8px; flex-wrap:wrap;">';
-    contatos.forEach(function(c){
-      html += '<a class="btn" href="' + linkWhatsapp(c.telefone, mensagem) + '" target="_blank" rel="noopener" style="text-decoration:none; display:inline-flex; align-items:center; gap:5px;"><i class="ti ti-brand-whatsapp" aria-hidden="true"></i> ' + escapeHtml(c.nome) + '</a>';
+    validos.forEach(function(c){
+      if(c.tipo==='grupo'){
+        html += '<button type="button" class="btn" data-wa-grupo-link="' + escapeHtml(c.link) + '" data-wa-grupo-msg="' + escapeHtml(mensagem) + '" style="display:inline-flex; align-items:center; gap:5px;"><i class="ti ti-brand-whatsapp" aria-hidden="true"></i> ' + escapeHtml(c.nome) + ' (grupo)</button>';
+      } else {
+        html += '<a class="btn" href="' + linkWhatsapp(c.telefone, mensagem) + '" target="_blank" rel="noopener" style="text-decoration:none; display:inline-flex; align-items:center; gap:5px;"><i class="ti ti-brand-whatsapp" aria-hidden="true"></i> ' + escapeHtml(c.nome) + '</a>';
+      }
     });
-    html += '</div></div>';
+    html += '</div>';
+    html += '<div style="font-size:10.5px; color:var(--muted); margin-top:6px;">Grupo: copia a mensagem sozinho e abre o WhatsApp — é só colar (Ctrl+V ou segurar e colar) na conversa.</div>';
+    html += '</div>';
     return html;
   }
 
@@ -2053,6 +2060,16 @@
     '</div>';
   }
 
+  function insumoExtraRowHtml(){
+    var opts = '<option value="">Selecionar insumo…</option>' + __insumoSuggestions.map(function(n){ return '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</option>'; }).join('');
+    return '<div class="ingred-row" style="display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; align-items:flex-end;">' +
+      '<div><label style="display:block; font-size:10px; color:var(--muted); margin-bottom:2px;">Qtd</label><input class="grid-input" style="width:75px;" type="number" step="0.01" min="0" data-fing-field="quantidade" placeholder="Qtd"></div>' +
+      '<div><label style="display:block; font-size:10px; color:var(--muted); margin-bottom:2px;">Unid.</label><select class="grid-select" style="width:75px;" data-fing-field="unidade">' + UNIDADES.map(function(u){ return '<option value="' + u + '">' + u + '</option>'; }).join('') + '</select></div>' +
+      '<div style="flex:1; min-width:160px;"><label style="display:block; font-size:10px; color:var(--muted); margin-bottom:2px;">Insumo</label><select class="grid-select" style="width:100%;" data-fing-field="nome">' + opts + '</select></div>' +
+      '<button type="button" class="btn ingred-remove-btn" style="padding:8px 9px;">×</button>' +
+    '</div>';
+  }
+
   function rendRowTravadaHtml(nome, quantidade, unidade, quantidadeBrutaFicha){
     var temBruto = quantidadeBrutaFicha!=null && quantidadeBrutaFicha!=='';
     return '<div class="ingred-row" style="display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap; align-items:center;">' +
@@ -2278,6 +2295,10 @@
     html += formField('text','rend-total','Rendimento total obtido','Ex: 4,6kg');
     html += '</div>';
     html += '<div style="margin-top:16px;"><button class="btn primary" id="rend-save">Salvar rendimento</button></div>';
+    if(window.__rendLastMsg){
+      html += await botaoAvisarWhatsappHtml(window.__rendLastMsg, 'rend-whats-btn');
+      window.__rendLastMsg = null;
+    }
     html += '</div>';
 
     html += '<div class="card">';
@@ -2397,9 +2418,20 @@
       }
     });
     rowsContainer.addEventListener('input', atualizarCustoLote);
+    rowsContainer.addEventListener('change', function(ev){
+      if(ev.target.matches('[data-fing-field="nome"]') && ev.target.tagName==='SELECT'){
+        var info = buscarPrecoInsumo(ev.target.value);
+        if(info && info.unidade){
+          var row = ev.target.closest('.ingred-row');
+          var unidadeSel = row.querySelector('[data-fing-field="unidade"]');
+          if(unidadeSel && UNIDADES.indexOf(info.unidade)!==-1) unidadeSel.value = info.unidade;
+        }
+        atualizarCustoLote();
+      }
+    });
     addBtn.onclick = function(){
       var div = document.createElement('div');
-      div.innerHTML = fichaIngredRowHtml();
+      div.innerHTML = insumoExtraRowHtml();
       rowsContainer.appendChild(div.firstElementChild);
     };
 
@@ -2493,7 +2525,11 @@
       all[idx].producoes = all[idx].producoes || [];
       all[idx].producoes.push({id:'p'+Date.now(), data:data, ingredientes:ingredientes, rendimentoTotal:total, responsavel:user.nome || labelRole(user.role)});
       var saved = await setData('conteudo', all);
-      if(saved){ logAudit(all[idx].marca==='todas' ? 'Ambas as unidades' : all[idx].marca, 'Registrou rendimento', all[idx].titulo + ' · ' + total); }
+      if(saved){
+        logAudit(all[idx].marca==='todas' ? 'Ambas as unidades' : all[idx].marca, 'Registrou rendimento', all[idx].titulo + ' · ' + total);
+        var listaIngMsg = ingredientes.map(function(ing){ return (ing.quantidade||'') + (ing.unidade||'') + ' de ' + ing.nome; }).join(', ');
+        window.__rendLastMsg = '📦 Produção registrada: ' + all[idx].titulo + '\nData: ' + data + '\nRendimento obtido: ' + total + '\nInsumos usados: ' + (listaIngMsg||'—') + '\nRegistrado por: ' + (user.nome || labelRole(user.role));
+      }
       renderRendimentoTab(main);
     };
   }
@@ -3193,22 +3229,24 @@
 
     html += '<div style="height:16px"></div>';
     html += '<div class="card">';
-    html += '<div style="font-weight:600; font-size:14px;">Contatos de WhatsApp para avisos</div>';
-    html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Aparecem como botão "Avisar por WhatsApp" em pedidos de folga, atestados e sugestões de compra. Coloca o número com DDI+DDD, só números (ex: 5541999998888).</div>';
+    html += '<div style="font-weight:600; font-size:14px;">Contatos e grupos de WhatsApp para avisos</div>';
+    html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Aparecem como botão "Avisar por WhatsApp" em pedidos de folga, atestados, sugestões de compra e produções registradas. Contato: número com DDI+DDD, só números (ex: 5541999998888). Grupo: cole o link de convite do grupo (Menu do grupo → Convidar via link).</div>';
     if(whatsappContatos.length===0){
-      html += '<div class="empty">Nenhum contato cadastrado ainda.</div>';
+      html += '<div class="empty">Nenhum contato ou grupo cadastrado ainda.</div>';
     } else {
-      html += '<table style="margin-top:10px;"><thead><tr><th>Nome</th><th>Telefone</th><th></th></tr></thead><tbody>';
+      html += '<table style="margin-top:10px;"><thead><tr><th>Nome</th><th>Tipo</th><th>Número/Link</th><th></th></tr></thead><tbody>';
       whatsappContatos.forEach(function(c){
-        html += '<tr><td>' + escapeHtml(c.nome) + '</td><td class="num-cell">' + escapeHtml(c.telefone) + '</td>' +
+        html += '<tr><td>' + escapeHtml(c.nome) + '</td><td>' + (c.tipo==='grupo'?'Grupo':'Contato') + '</td><td class="num-cell" style="max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + escapeHtml(c.tipo==='grupo' ? (c.link||'') : (c.telefone||'')) + '</td>' +
           '<td><button class="btn" data-remove-whats="' + c.id + '">Remover</button></td></tr>';
       });
       html += '</tbody></table>';
     }
-    html += '<div class="add-row-bar">';
-    html += '<input class="grid-input wide" type="text" id="whats-nome" placeholder="Nome, ex: Igor">';
-    html += '<input class="grid-input wide" type="text" id="whats-telefone" placeholder="Ex: 5541999998888">';
-    html += '<button class="btn primary" id="whats-add">Adicionar contato</button>';
+    html += '<div class="add-row-bar" style="flex-wrap:wrap;">';
+    html += '<input class="grid-input wide" type="text" id="whats-nome" placeholder="Nome, ex: Igor ou Grupo Cozinha">';
+    html += '<select class="grid-select" id="whats-tipo"><option value="contato">Contato individual</option><option value="grupo">Grupo</option></select>';
+    html += '<input class="grid-input wide" type="text" id="whats-telefone" placeholder="Ex: 5541999998888" style="width:220px;">';
+    html += '<input class="grid-input wide" type="text" id="whats-link" placeholder="Link de convite do grupo" style="width:220px; display:none;">';
+    html += '<button class="btn primary" id="whats-add">Adicionar</button>';
     html += '</div>';
     html += '</div>';
 
@@ -3333,14 +3371,31 @@
       };
     });
 
+    var whatsTipoSel = document.getElementById('whats-tipo');
+    whatsTipoSel.addEventListener('change', function(){
+      var isGrupo = this.value==='grupo';
+      document.getElementById('whats-telefone').style.display = isGrupo ? 'none' : 'block';
+      document.getElementById('whats-link').style.display = isGrupo ? 'block' : 'none';
+    });
+
     document.getElementById('whats-add').onclick = async function(){
       var nome = document.getElementById('whats-nome').value.trim();
-      var telefone = document.getElementById('whats-telefone').value.trim().replace(/\D/g,'');
-      if(!nome || !telefone){ showToast('Preencha nome e telefone.', 'error'); return; }
+      var tipo = document.getElementById('whats-tipo').value;
+      if(!nome){ showToast('Informe um nome.', 'error'); return; }
+      var novo = {id:'wa'+Date.now(), nome:nome, tipo:tipo};
+      if(tipo==='grupo'){
+        var link = document.getElementById('whats-link').value.trim();
+        if(!link){ showToast('Cole o link de convite do grupo.', 'error'); return; }
+        novo.link = link;
+      } else {
+        var telefone = document.getElementById('whats-telefone').value.trim().replace(/\D/g,'');
+        if(!telefone){ showToast('Informe o telefone.', 'error'); return; }
+        novo.telefone = telefone;
+      }
       var all = await getData('whatsapp-contatos', []);
-      all.push({id:'wa'+Date.now(), nome:nome, telefone:telefone});
+      all.push(novo);
       var saved = await setData('whatsapp-contatos', all);
-      if(saved){ logAudit('Ambas as unidades', 'Cadastrou contato de WhatsApp', nome); }
+      if(saved){ logAudit('Ambas as unidades', 'Cadastrou ' + (tipo==='grupo'?'grupo':'contato') + ' de WhatsApp', nome); }
       renderConfig(main);
     };
 
@@ -3711,6 +3766,19 @@
     await enterApp();
     return true;
   }
+
+  document.addEventListener('click', function(ev){
+    var btn = ev.target.closest('[data-wa-grupo-link]');
+    if(!btn) return;
+    var link = btn.getAttribute('data-wa-grupo-link');
+    var msg = btn.getAttribute('data-wa-grupo-msg');
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(msg).then(function(){
+        showToast('Mensagem copiada! Cole (Ctrl+V) na conversa do grupo.');
+      }).catch(function(){});
+    }
+    window.open(link, '_blank');
+  });
 
   (async function initApp(){
     var restored = await trySilentLogin();
