@@ -310,6 +310,7 @@
     conteudo: [
       {id:'receitas', label:'Receitas'},
       {id:'producaodia', label:'Produção do dia'},
+      {id:'planejarproducao', label:'Planejar produção'},
       {id:'rendimento', label:'Registrar rendimento'},
       {id:'verificacao', label:'Verificação geral'}
     ]
@@ -320,7 +321,7 @@
     if(cargo && cargo.subTabs && cargo.subTabs[navId]){ return cargo.subTabs[navId]; }
     if(user.role==='gerente') return todasIds;
     if(navId==='motoboys') return ['daily'];
-    if(navId==='conteudo') return todasIds.filter(function(id){ return id!=='verificacao'; });
+    if(navId==='conteudo') return todasIds.filter(function(id){ return id!=='verificacao' && id!=='planejarproducao'; });
     return todasIds;
   }
   var DEFAULT_RATES = {dog:8, dell:6, rtDog:4, rtDell:3, diariaAlmoco:10, diariaTarde:10, diariaNoite:0};
@@ -532,7 +533,8 @@
       var saved = await setData('users-list', all);
       if(!saved) return;
       user = {nome:nome, username:username, role:'dono', unit:null};
-      renderCodigoRecuperacaoTela(card, codigo, function(){ enterApp(true); });
+      try{ localStorage.setItem('cg_username', username); }catch(e){}
+      renderCodigoRecuperacaoTela(card, codigo, function(){ enterApp(); });
     };
   }
 
@@ -549,6 +551,8 @@
   }
 
   function renderLoginForm(card){
+    var usuarioSalvo = '';
+    try{ usuarioSalvo = localStorage.getItem('cg_username') || ''; }catch(e){}
     card.innerHTML =
       '<div class="login-ticket" style="text-align:center;">' +
         '<img src="logo-bulldogs.png" alt="" style="width:76px; height:auto; margin-bottom:10px;">' +
@@ -556,13 +560,9 @@
         '<div class="login-title">Entrar no painel</div>' +
       '</div>' +
       '<div class="field-label">Usuário</div>' +
-      '<input class="grid-input wide" style="width:100%;" type="text" id="lg-username" placeholder="seu usuário">' +
+      '<input class="grid-input wide" style="width:100%;" type="text" id="lg-username" placeholder="seu usuário" value="' + usuarioSalvo.replace(/"/g,'&quot;') + '">' +
       '<div class="field-label">Senha</div>' +
       '<input class="grid-input wide" style="width:100%;" type="password" id="lg-password" placeholder="sua senha">' +
-      '<label style="display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--ink-2); margin-top:14px; cursor:pointer;">' +
-        '<input type="checkbox" id="lg-lembrar" style="width:16px; height:16px;"> Manter conectado neste dispositivo' +
-      '</label>' +
-      '<div style="font-size:11px; color:var(--muted); margin-top:4px;">Só marque em aparelho pessoal. Em computador/tablet compartilhado da loja, deixe desmarcado.</div>' +
       '<div id="login-error" style="color:var(--ember); font-size:12.5px; margin-top:10px;"></div>' +
       '<button class="btn-primary" id="lg-enter">Entrar</button>' +
       '<div style="text-align:center; font-size:12px; color:var(--muted); margin-top:14px;">Esqueceu a senha? Peça ao Dono/Gerente para redefinir, ou <a href="#" id="lg-esqueci" style="color:var(--ember); font-weight:600;">use seu código de recuperação</a>.</div>';
@@ -570,7 +570,6 @@
     async function tryLogin(){
       var username = document.getElementById('lg-username').value.trim().toLowerCase();
       var password = document.getElementById('lg-password').value;
-      var lembrar = document.getElementById('lg-lembrar').checked;
       var errEl = document.getElementById('login-error');
       errEl.textContent = '';
       if(!username || !password){ errEl.textContent = 'Preencha usuário e senha.'; return; }
@@ -579,9 +578,14 @@
       var found = all.find(function(u){ return u.ativo!==false && u.username && u.username.toLowerCase()===username && u.passwordHash===hash; });
       if(!found){ errEl.textContent = 'Usuário ou senha incorretos.'; return; }
       user = {nome:found.nome, username:found.username, role:found.role, unit:found.unit, cargoId:found.cargoId||null, cargoNome:found.cargoNome||null};
-      enterApp(lembrar);
+      try{ localStorage.setItem('cg_username', found.username); }catch(e){}
+      enterApp();
     }
 
+    if(usuarioSalvo){
+      var pwField = document.getElementById('lg-password');
+      setTimeout(function(){ pwField.focus(); }, 0);
+    }
     document.getElementById('lg-enter').onclick = tryLogin;
     document.getElementById('lg-password').addEventListener('keydown', function(ev){ if(ev.key==='Enter') tryLogin(); });
     document.getElementById('lg-esqueci').onclick = function(ev){ ev.preventDefault(); renderRecuperarSenha(card); };
@@ -655,11 +659,7 @@
     return labelRole(u2.role);
   }
 
-  async function enterApp(lembrar){
-    try{
-      if(lembrar){ localStorage.setItem('cg_session', JSON.stringify({username:user.username})); }
-      else { localStorage.removeItem('cg_session'); }
-    }catch(e){}
+  async function enterApp(){
     document.getElementById('view-login').style.display = 'none';
     document.getElementById('view-app').style.display = 'block';
     await loadNavPermissions();
@@ -702,7 +702,7 @@
 
   document.getElementById('btn-switch').onclick = function(){
     user = null;
-    try{ localStorage.removeItem('cg_session'); }catch(e){}
+    try{ localStorage.removeItem('cg_username'); }catch(e){}
     document.getElementById('view-app').style.display = 'none';
     document.getElementById('view-login').style.display = 'flex';
     renderLogin();
@@ -1766,8 +1766,7 @@
     var tab = window.__ctTab || abasVisiveis[0].id;
     if(tab==='processos') tab = 'receitas'; // aba desativada a pedido — evita ficar preso num estado antigo
     if(permitidas.indexOf(tab)===-1) tab = abasVisiveis[0].id;
-    var podePlanejar = (user.role==='dono' || user.role==='gerente' || user.role==='supervisor');
-    var subtitulos = {receitas:'Fichas técnicas por marca', producaodia:'O que precisa ser feito hoje', rendimento:'Registre o rendimento de uma produção', verificacao:'Controle geral dos rendimentos registrados'};
+    var subtitulos = {receitas:'Fichas técnicas por marca', producaodia:'O que precisa ser feito hoje', planejarproducao:'Escolha os dias fixos de cada receita', rendimento:'Registre o rendimento de uma produção', verificacao:'Controle geral dos rendimentos registrados'};
     var html = pageHead('Receitas & Processos', subtitulos[tab] || '');
 
     if(abasVisiveis.length>1){
@@ -1786,7 +1785,8 @@
 
     var content = document.getElementById('ct-tab-content');
     if(tab==='rendimento'){ await renderRendimentoTab(content); }
-    else if(tab==='producaodia'){ await renderProducaoDia(content, podePlanejar); }
+    else if(tab==='producaodia'){ await renderProducaoDia(content); }
+    else if(tab==='planejarproducao'){ await renderPlanejarProducao(content); }
     else if(tab==='verificacao'){ await renderVerificacaoTab(content); }
     else { await renderFichasTab(content, 'receita'); }
   }
@@ -2300,7 +2300,7 @@
   }
 
 
-  async function renderProducaoDia(main, podePlanejar){
+  async function renderProducaoDia(main){
     var items = await getConteudo();
     var receitas = items.filter(function(it){ return it.tipo==='receita'; });
     var dataAtual = window.__pdData || todayISO();
@@ -2325,54 +2325,32 @@
     if(dirty) await setData('producao-diaria', todosPlanos);
 
     var planosDoDia = todosPlanos.filter(function(p){ return p.data===dataAtual && (p.unit===user.unit || user.role==='dono'); });
+    var jaPlanejadasIds = planosDoDia.map(function(p){ return p.receitaId; });
+    var receitasParaAdicionar = receitas.filter(function(r){ return jaPlanejadasIds.indexOf(r.id)===-1; });
 
     var html = '<div class="card" style="margin-bottom:16px;">';
     html += '<div class="form-field" style="max-width:220px; margin:0;"><label>Data</label><input type="date" id="pd-data" value="' + dataAtual + '"></div>';
     html += '<div style="font-size:11.5px; color:var(--muted); margin-top:6px;">' + weekdayLabel(weekdayHoje) + '</div>';
     html += '</div>';
 
-    if(podePlanejar){
-      html += '<div class="card" style="margin-bottom:16px;">';
-      html += '<div style="font-weight:600; font-size:14px; margin-bottom:4px;">O que precisa ser feito nesse dia</div>';
-      html += '<div style="font-size:11.5px; color:var(--muted); margin-bottom:12px;">Marque as receitas de hoje. Clique na estrela para escolher em quais dias da semana ela deve entrar sozinha na lista (dá para mudar quando quiser).</div>';
-      if(receitas.length===0){
-        html += '<div class="empty">Nenhuma receita cadastrada ainda.</div>';
-      } else {
-        var planejadosSet = {};
-        planosDoDia.forEach(function(p){ planejadosSet[p.receitaId] = true; });
-        var fixasPorReceita = {};
-        fixas.forEach(function(f){ fixasPorReceita[f.receitaId] = f; });
-        html += '<div style="display:flex; flex-direction:column; gap:4px;">';
-        receitas.forEach(function(r){
-          var marcado = !!planejadosSet[r.id];
-          var fixa = fixasPorReceita[r.id];
-          var temDias = fixa && fixa.weekdays && fixa.weekdays.length>0;
-          html += '<div>';
-          html += '<div style="display:flex; align-items:center; gap:8px; padding:4px 0;">';
-          html += '<label style="display:flex; align-items:center; gap:8px; font-size:13px; cursor:pointer; flex:1;">' +
-            '<input type="checkbox" data-pd-check="' + r.id + '"' + (marcado?' checked':'') + ' style="width:16px; height:16px;">' +
-            escapeHtml(r.titulo) + ' <span class="lock-badge" style="background:var(--ok-bg); color:var(--ok-txt);">' + escapeHtml(marcaLabel(r.marca)) + '</span>' +
-            (temDias ? '<span style="font-size:11px; color:var(--muted);">(' + fixa.weekdays.map(function(w){ return weekdayLabel(w).slice(0,3); }).join(', ') + ')</span>' : '') +
-          '</label>';
-          html += '<button type="button" class="btn" data-pd-fixar-toggle="' + r.id + '" title="Escolher dias fixos" style="padding:4px 9px; font-size:13px;' + (temDias ? ' color:var(--ember); border-color:var(--ember);' : '') + '">' + (temDias ? '★' : '☆') + '</button>';
-          html += '</div>';
-          html += '<div id="pd-dias-' + r.id + '" style="display:none; padding:8px 0 10px 24px; flex-wrap:wrap; gap:10px;">';
-          WEEKDAY_DISPLAY_ORDER.forEach(function(wd){
-            var marcadoDia = fixa && fixa.weekdays && fixa.weekdays.indexOf(wd)!==-1;
-            html += '<label style="display:inline-flex; align-items:center; gap:4px; font-size:12px; margin-right:10px; cursor:pointer;">' +
-              '<input type="checkbox" data-pd-dia="' + r.id + '" data-dia-valor="' + wd + '"' + (marcadoDia?' checked':'') + '> ' + weekdayLabel(wd).slice(0,3) +
-            '</label>';
-          });
-          html += '</div>';
-          html += '</div>';
-        });
-        html += '</div>';
-      }
+    html += '<div class="card">';
+    html += '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:12px;">';
+    html += '<div style="font-weight:600; font-size:14px;">Produções do dia — ' + dataAtual + '</div>';
+    html += '<button class="btn" id="pd-add-toggle">+ Adicionar produção do dia</button>';
+    html += '</div>';
+
+    html += '<div id="pd-add-box" style="display:none; background:var(--paper); border-radius:8px; padding:12px; margin-bottom:14px;">';
+    if(receitasParaAdicionar.length===0){
+      html += '<div style="font-size:12.5px; color:var(--muted);">Todas as receitas já estão na lista de hoje.</div>';
+    } else {
+      html += '<div style="display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end;">';
+      html += '<div class="form-field" style="margin:0; flex:1; min-width:200px;"><label>Qual receita?</label><select id="pd-add-select"><option value="">Selecionar…</option>' +
+        receitasParaAdicionar.map(function(r){ return '<option value="' + r.id + '">' + escapeHtml(r.titulo) + '</option>'; }).join('') + '</select></div>';
+      html += '<button class="btn primary" id="pd-add-confirm">Adicionar</button>';
       html += '</div>';
     }
+    html += '</div>';
 
-    html += '<div class="card">';
-    html += '<div style="font-weight:600; font-size:14px; margin-bottom:10px;">Lista de produção — ' + dataAtual + '</div>';
     if(planosDoDia.length===0){
       html += '<div class="empty">Nada planejado para esse dia ainda.</div>';
     } else {
@@ -2399,72 +2377,29 @@
 
     document.getElementById('pd-data').addEventListener('change', function(){
       window.__pdData = this.value || todayISO();
-      renderProducaoDia(main, podePlanejar);
+      renderProducaoDia(main);
     });
 
-    if(podePlanejar){
-      main.querySelectorAll('[data-pd-check]').forEach(function(chk){
-        chk.addEventListener('change', async function(){
-          var receitaId = chk.getAttribute('data-pd-check');
-          var receita = receitas.find(function(r){ return r.id===receitaId; });
-          var all = await getData('producao-diaria', []);
-          if(chk.checked){
-            var dup = all.some(function(p){ return p.data===dataAtual && p.unit===user.unit && p.receitaId===receitaId; });
-            if(!dup){
-              all.push({id:'pd'+Date.now()+Math.random().toString(16).slice(2), data:dataAtual, unit:user.unit, receitaId:receitaId, receitaTitulo:receita.titulo, feito:false, feitoPor:null, feitoEm:null});
-              var saved1 = await setData('producao-diaria', all);
-              if(saved1){ logAudit(user.unit, 'Planejou produção do dia', receita.titulo + ' · ' + dataAtual); }
-            }
-            var removidos1 = await getData('producao-diaria-removidos', []);
-            removidos1 = removidos1.filter(function(r){ return !(r.data===dataAtual && r.unit===user.unit && r.receitaId===receitaId); });
-            await setData('producao-diaria-removidos', removidos1);
-          } else {
-            var idx = all.findIndex(function(p){ return p.data===dataAtual && p.unit===user.unit && p.receitaId===receitaId; });
-            if(idx>-1){
-              all.splice(idx,1);
-              var saved2 = await setData('producao-diaria', all);
-              if(saved2){ logAudit(user.unit, 'Removeu do planejamento do dia', receita.titulo + ' · ' + dataAtual); }
-            }
-            var ehFixa = fixas.some(function(f){ return f.receitaId===receitaId && (f.weekdays||[]).indexOf(weekdayHoje)!==-1; });
-            if(ehFixa){
-              var removidos2 = await getData('producao-diaria-removidos', []);
-              removidos2.push({unit:user.unit, data:dataAtual, receitaId:receitaId});
-              await setData('producao-diaria-removidos', removidos2);
-            }
-          }
-          renderProducaoDia(main, podePlanejar);
-        });
-      });
+    document.getElementById('pd-add-toggle').onclick = function(){
+      var box = document.getElementById('pd-add-box');
+      box.style.display = (box.style.display==='none') ? 'block' : 'none';
+    };
 
-      main.querySelectorAll('[data-pd-fixar-toggle]').forEach(function(btn){
-        btn.onclick = function(){
-          var id = btn.getAttribute('data-pd-fixar-toggle');
-          var painel = document.getElementById('pd-dias-' + id);
-          painel.style.display = (painel.style.display==='none') ? 'flex' : 'none';
-        };
-      });
-
-      main.querySelectorAll('[data-pd-dia]').forEach(function(chk){
-        chk.addEventListener('change', async function(){
-          var receitaId = chk.getAttribute('data-pd-dia');
-          var dia = chk.getAttribute('data-dia-valor');
-          var receita = receitas.find(function(r){ return r.id===receitaId; });
-          var all = await getData('producao-diaria-fixas', []);
-          var idx = all.findIndex(function(f){ return f.unit===user.unit && f.receitaId===receitaId; });
-          if(idx===-1){
-            all.push({id:'pdf'+Date.now()+Math.random().toString(16).slice(2), unit:user.unit, receitaId:receitaId, receitaTitulo:receita.titulo, weekdays:[dia]});
-          } else {
-            var dias = all[idx].weekdays || [];
-            if(chk.checked){ if(dias.indexOf(dia)===-1) dias.push(dia); }
-            else { dias = dias.filter(function(d){ return d!==dia; }); }
-            if(dias.length===0){ all.splice(idx,1); }
-            else { all[idx].weekdays = dias; }
-          }
-          var saved = await setData('producao-diaria-fixas', all);
-          if(saved){ logAudit(user.unit, 'Atualizou dias fixos de produção', receita.titulo + ' · ' + weekdayLabel(dia)); }
-          renderProducaoDia(main, podePlanejar);
-        });
-      });
+    var addConfirmBtn = document.getElementById('pd-add-confirm');
+    if(addConfirmBtn){
+      addConfirmBtn.onclick = async function(){
+        var receitaId = document.getElementById('pd-add-select').value;
+        if(!receitaId){ showToast('Selecione uma receita.', 'error'); return; }
+        var receita = receitas.find(function(r){ return r.id===receitaId; });
+        var all = await getData('producao-diaria', []);
+        var dup = all.some(function(p){ return p.data===dataAtual && p.unit===user.unit && p.receitaId===receitaId; });
+        if(!dup){
+          all.push({id:'pd'+Date.now()+Math.random().toString(16).slice(2), data:dataAtual, unit:user.unit, receitaId:receitaId, receitaTitulo:receita.titulo, feito:false, feitoPor:null, feitoEm:null});
+          var saved = await setData('producao-diaria', all);
+          if(saved){ logAudit(user.unit, 'Adicionou produção do dia', receita.titulo + ' · ' + dataAtual); }
+        }
+        renderProducaoDia(main);
+      };
     }
 
     main.querySelectorAll('[data-pd-feito]').forEach(function(chk){
@@ -2479,7 +2414,7 @@
           var saved = await setData('producao-diaria', all);
           if(saved){ logAudit(all[idx].unit, chk.checked ? 'Marcou produção como feita' : 'Desmarcou produção', all[idx].receitaTitulo); }
         }
-        renderProducaoDia(main, podePlanejar);
+        renderProducaoDia(main);
       });
     });
 
@@ -2491,6 +2426,79 @@
       };
     });
   }
+
+  // ---------- Planejar produção (só gestor) ----------
+  async function renderPlanejarProducao(main){
+    var items = await getConteudo();
+    var receitas = items.filter(function(it){ return it.tipo==='receita'; });
+    var fixas = (await getData('producao-diaria-fixas', [])).filter(function(f){ return f.unit===user.unit || user.role==='dono'; });
+
+    var html = '<div class="card">';
+    html += '<div style="font-weight:600; font-size:14px; margin-bottom:4px;">Planejar produção fixa</div>';
+    html += '<div style="font-size:11.5px; color:var(--muted); margin-bottom:12px;">Clique na estrela para escolher em quais dias da semana cada receita deve entrar sozinha na lista de produção do dia. A equipe usa a aba "Produção do dia" para ver e marcar como feito, ou adicionar algo extra pontualmente.</div>';
+    if(receitas.length===0){
+      html += '<div class="empty">Nenhuma receita cadastrada ainda.</div>';
+    } else {
+      var fixasPorReceita = {};
+      fixas.forEach(function(f){ fixasPorReceita[f.receitaId] = f; });
+      html += '<div style="display:flex; flex-direction:column; gap:4px;">';
+      receitas.forEach(function(r){
+        var fixa = fixasPorReceita[r.id];
+        var temDias = fixa && fixa.weekdays && fixa.weekdays.length>0;
+        html += '<div>';
+        html += '<div style="display:flex; align-items:center; gap:8px; padding:4px 0;">';
+        html += '<div style="flex:1; font-size:13px;">' + escapeHtml(r.titulo) + ' <span class="lock-badge" style="background:var(--ok-bg); color:var(--ok-txt);">' + escapeHtml(marcaLabel(r.marca)) + '</span>' +
+          (temDias ? '<span style="font-size:11px; color:var(--muted); margin-left:6px;">(' + fixa.weekdays.map(function(w){ return weekdayLabel(w).slice(0,3); }).join(', ') + ')</span>' : '') +
+        '</div>';
+        html += '<button type="button" class="btn" data-pd-fixar-toggle="' + r.id + '" title="Escolher dias fixos" style="padding:4px 9px; font-size:13px;' + (temDias ? ' color:var(--ember); border-color:var(--ember);' : '') + '">' + (temDias ? '★' : '☆') + '</button>';
+        html += '</div>';
+        html += '<div id="pd-dias-' + r.id + '" style="display:none; padding:8px 0 10px 0; flex-wrap:wrap; gap:10px;">';
+        WEEKDAY_DISPLAY_ORDER.forEach(function(wd){
+          var marcadoDia = fixa && fixa.weekdays && fixa.weekdays.indexOf(wd)!==-1;
+          html += '<label style="display:inline-flex; align-items:center; gap:4px; font-size:12px; margin-right:10px; cursor:pointer;">' +
+            '<input type="checkbox" data-pd-dia="' + r.id + '" data-dia-valor="' + wd + '"' + (marcadoDia?' checked':'') + '> ' + weekdayLabel(wd).slice(0,3) +
+          '</label>';
+        });
+        html += '</div>';
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+    html += '</div>';
+
+    main.innerHTML = html;
+
+    main.querySelectorAll('[data-pd-fixar-toggle]').forEach(function(btn){
+      btn.onclick = function(){
+        var id = btn.getAttribute('data-pd-fixar-toggle');
+        var painel = document.getElementById('pd-dias-' + id);
+        painel.style.display = (painel.style.display==='none') ? 'flex' : 'none';
+      };
+    });
+
+    main.querySelectorAll('[data-pd-dia]').forEach(function(chk){
+      chk.addEventListener('change', async function(){
+        var receitaId = chk.getAttribute('data-pd-dia');
+        var dia = chk.getAttribute('data-dia-valor');
+        var receita = receitas.find(function(r){ return r.id===receitaId; });
+        var all = await getData('producao-diaria-fixas', []);
+        var idx = all.findIndex(function(f){ return f.unit===user.unit && f.receitaId===receitaId; });
+        if(idx===-1){
+          all.push({id:'pdf'+Date.now()+Math.random().toString(16).slice(2), unit:user.unit, receitaId:receitaId, receitaTitulo:receita.titulo, weekdays:[dia]});
+        } else {
+          var dias = all[idx].weekdays || [];
+          if(chk.checked){ if(dias.indexOf(dia)===-1) dias.push(dia); }
+          else { dias = dias.filter(function(d){ return d!==dia; }); }
+          if(dias.length===0){ all.splice(idx,1); }
+          else { all[idx].weekdays = dias; }
+        }
+        var saved = await setData('producao-diaria-fixas', all);
+        if(saved){ logAudit(user.unit, 'Atualizou dias fixos de produção', receita.titulo + ' · ' + weekdayLabel(dia)); }
+        renderPlanejarProducao(main);
+      });
+    });
+  }
+
 
 
   async function renderRegraTres(main){
@@ -4071,21 +4079,6 @@
     });
   }
 
-  async function trySilentLogin(){
-    var saved;
-    try{ saved = JSON.parse(localStorage.getItem('cg_session') || 'null'); }catch(e){ saved = null; }
-    if(!saved || !saved.username) return false;
-    var all = await getData('users-list', []);
-    var found = all.find(function(u){ return u.ativo!==false && u.username && u.username.toLowerCase()===saved.username.toLowerCase(); });
-    if(!found){
-      try{ localStorage.removeItem('cg_session'); }catch(e){}
-      return false;
-    }
-    user = {nome:found.nome, username:found.username, role:found.role, unit:found.unit, cargoId:found.cargoId||null, cargoNome:found.cargoNome||null};
-    await enterApp(true);
-    return true;
-  }
-
   document.addEventListener('click', function(ev){
     var btn = ev.target.closest('[data-wa-grupo-link]');
     if(!btn) return;
@@ -4099,10 +4092,7 @@
     window.open(link, '_blank');
   });
 
-  (async function initApp(){
-    var restored = await trySilentLogin();
-    if(!restored) renderLogin();
-  })();
+  renderLogin();
 
   if('serviceWorker' in navigator){
     window.addEventListener('load', function(){
