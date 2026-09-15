@@ -298,7 +298,7 @@
     // {id:'area-colaborador', label:'Área do Colaborador', icon:'ti-user-heart', roles:['dono','gerente','supervisor','equipe','caixa']}, // desativado a pedido — reative removendo o comentário
     // {id:'avaliacoes', label:'Avaliações', icon:'ti-star', roles:['dono','gerente','supervisor']}, // desativado a pedido — reative removendo o comentário
     {id:'auditoria', label:'Auditoria', icon:'ti-history', roles:['dono','gerente']},
-    {id:'config', label:'Configurações', icon:'ti-settings', roles:['dono']},
+    {id:'config', label:'Configurações', icon:'ti-settings', roles:['dono','gerente']},
     {id:'usuarios', label:'Usuários', icon:'ti-users', roles:['dono','gerente']}
   ];
   var SUBTABS_REGISTRY = {
@@ -1784,7 +1784,7 @@
   }
 
   async function renderFichasTab(main, tipoFixo){
-    var canEdit = user.role==='dono';
+    var canEdit = isAdmin();
     var items = await getConteudo();
     __insumoSuggestions = await coletarNomesInsumos(items);
     __insumoPrecos = await getData('insumos-precos', {});
