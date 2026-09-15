@@ -532,7 +532,7 @@
       var saved = await setData('users-list', all);
       if(!saved) return;
       user = {nome:nome, username:username, role:'dono', unit:null};
-      renderCodigoRecuperacaoTela(card, codigo, function(){ enterApp(); });
+      renderCodigoRecuperacaoTela(card, codigo, function(){ enterApp(true); });
     };
   }
 
@@ -559,6 +559,10 @@
       '<input class="grid-input wide" style="width:100%;" type="text" id="lg-username" placeholder="seu usuário">' +
       '<div class="field-label">Senha</div>' +
       '<input class="grid-input wide" style="width:100%;" type="password" id="lg-password" placeholder="sua senha">' +
+      '<label style="display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--ink-2); margin-top:14px; cursor:pointer;">' +
+        '<input type="checkbox" id="lg-lembrar" style="width:16px; height:16px;"> Manter conectado neste dispositivo' +
+      '</label>' +
+      '<div style="font-size:11px; color:var(--muted); margin-top:4px;">Só marque em aparelho pessoal. Em computador/tablet compartilhado da loja, deixe desmarcado.</div>' +
       '<div id="login-error" style="color:var(--ember); font-size:12.5px; margin-top:10px;"></div>' +
       '<button class="btn-primary" id="lg-enter">Entrar</button>' +
       '<div style="text-align:center; font-size:12px; color:var(--muted); margin-top:14px;">Esqueceu a senha? Peça ao Dono/Gerente para redefinir, ou <a href="#" id="lg-esqueci" style="color:var(--ember); font-weight:600;">use seu código de recuperação</a>.</div>';
@@ -566,6 +570,7 @@
     async function tryLogin(){
       var username = document.getElementById('lg-username').value.trim().toLowerCase();
       var password = document.getElementById('lg-password').value;
+      var lembrar = document.getElementById('lg-lembrar').checked;
       var errEl = document.getElementById('login-error');
       errEl.textContent = '';
       if(!username || !password){ errEl.textContent = 'Preencha usuário e senha.'; return; }
@@ -574,7 +579,7 @@
       var found = all.find(function(u){ return u.ativo!==false && u.username && u.username.toLowerCase()===username && u.passwordHash===hash; });
       if(!found){ errEl.textContent = 'Usuário ou senha incorretos.'; return; }
       user = {nome:found.nome, username:found.username, role:found.role, unit:found.unit, cargoId:found.cargoId||null, cargoNome:found.cargoNome||null};
-      enterApp();
+      enterApp(lembrar);
     }
 
     document.getElementById('lg-enter').onclick = tryLogin;
@@ -650,8 +655,11 @@
     return labelRole(u2.role);
   }
 
-  async function enterApp(){
-    try{ localStorage.setItem('cg_session', JSON.stringify({username:user.username})); }catch(e){}
+  async function enterApp(lembrar){
+    try{
+      if(lembrar){ localStorage.setItem('cg_session', JSON.stringify({username:user.username})); }
+      else { localStorage.removeItem('cg_session'); }
+    }catch(e){}
     document.getElementById('view-login').style.display = 'none';
     document.getElementById('view-app').style.display = 'block';
     await loadNavPermissions();
@@ -4074,7 +4082,7 @@
       return false;
     }
     user = {nome:found.nome, username:found.username, role:found.role, unit:found.unit, cargoId:found.cargoId||null, cargoNome:found.cargoNome||null};
-    await enterApp();
+    await enterApp(true);
     return true;
   }
 
