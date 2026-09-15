@@ -2040,7 +2040,15 @@
     '</div></div>';
 
     if(it.imagem){ html += '<img src="' + it.imagem + '" alt="" style="max-width:100%; border-radius:10px; margin-top:14px; display:block;">'; }
-    if(it.rendimento){ html += '<div style="margin-top:14px; font-size:13px; font-weight:600; color:var(--ember);">Rendimento: ' + escapeHtml(it.rendimento) + '</div>'; }
+    if(it.rendimento){ html += '<div style="margin-top:14px; font-size:13px; font-weight:600; color:var(--ember);">Rendimento teórico (da ficha): ' + escapeHtml(it.rendimento) + '</div>'; }
+
+    var rendMedio = calcularRendimentoMedio(it.producoes);
+    if(rendMedio){
+      html += '<div style="margin-top:6px; font-size:13px; font-weight:600; color:var(--ink-2);">Rendimento médio registrado: ' + rendMedio.media + (rendMedio.sufixo ? ' ' + rendMedio.sufixo : '') +
+        ' <span style="font-weight:500; color:var(--muted); font-size:11.5px;">(baseado em ' + rendMedio.count + (rendMedio.count===1?' produção':' produções') + ' · variação de ' + rendMedio.min + ' a ' + rendMedio.max + (rendMedio.sufixo ? ' ' + rendMedio.sufixo : '') + ')</span></div>';
+    } else if(it.tipo==='receita') {
+      html += '<div style="margin-top:6px; font-size:12px; color:var(--muted);">Ainda sem produções registradas para calcular uma média real.</div>';
+    }
 
     if(it.ingredientes && it.ingredientes.length){
       html += '<div style="margin-top:14px; font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.03em;">Insumos</div>';
@@ -2219,6 +2227,30 @@
     return {valor: valor, texto: valor + (sufixo ? ' ' + sufixo : '')};
   }
 
+  function calcularRendimentoMedio(producoes){
+    var valores = [];
+    var sufixo = '';
+    (producoes||[]).forEach(function(p){
+      var texto = p.rendimentoTotal || p.rendimento;
+      var num = parseRendimentoNumero(texto);
+      if(num!=null){
+        valores.push(num);
+        if(!sufixo && texto){ sufixo = String(texto).replace(/[\d.,]+/, '').trim(); }
+      }
+    });
+    if(valores.length===0) return null;
+    var media = valores.reduce(function(a,b){ return a+b; }, 0) / valores.length;
+    var min = Math.min.apply(null, valores);
+    var max = Math.max.apply(null, valores);
+    return {
+      media: Math.round(media*100)/100,
+      min: Math.round(min*100)/100,
+      max: Math.round(max*100)/100,
+      sufixo: sufixo,
+      count: valores.length
+    };
+  }
+
   function wireFichaIngredContainer(container){
     container.addEventListener('click', function(ev){
       if(ev.target.classList.contains('ingred-remove-btn')){
@@ -2297,11 +2329,13 @@
 
     var porReceita = {};
     registros.forEach(function(reg){
-      if(!porReceita[reg.receitaId]) porReceita[reg.receitaId] = {titulo:reg.receitaTitulo, marca:reg.marca, indices:[], custos:[], count:0};
+      if(!porReceita[reg.receitaId]) porReceita[reg.receitaId] = {titulo:reg.receitaTitulo, marca:reg.marca, indices:[], custos:[], rendimentos:[], count:0};
       var pr = porReceita[reg.receitaId];
       pr.count++;
       if(reg.indice!=null) pr.indices.push(reg.indice);
       pr.custos.push(reg.custo);
+      var numRend = parseRendimentoNumero(reg.rendimentoTotal);
+      if(numRend!=null) pr.rendimentos.push({valor:numRend, sufixo: String(reg.rendimentoTotal||'').replace(/[\d.,]+/, '').trim()});
     });
     var idsReceita = Object.keys(porReceita).sort(function(a,b){ return porReceita[a].titulo.localeCompare(porReceita[b].titulo); });
 
@@ -2310,7 +2344,7 @@
     if(idsReceita.length===0){
       html += '<div class="empty">Nenhum rendimento registrado nesse período/marca.</div>';
     } else {
-      html += '<div class="table-scroll"><table><thead><tr><th>Receita</th><th>Marca</th><th>Lotes</th><th>Índice médio</th><th>Variação</th><th>Custo médio/lote</th><th></th></tr></thead><tbody>';
+      html += '<div class="table-scroll"><table><thead><tr><th>Receita</th><th>Marca</th><th>Lotes</th><th>Rendimento médio</th><th>Índice médio</th><th>Variação</th><th>Custo médio/lote</th><th></th></tr></thead><tbody>';
       idsReceita.forEach(function(id){
         var pr = porReceita[id];
         var mediaIdx = pr.indices.length ? pr.indices.reduce(function(s,v){return s+v;},0)/pr.indices.length : null;
@@ -2318,12 +2352,19 @@
         var maxIdx = pr.indices.length ? Math.max.apply(null, pr.indices) : null;
         var variacao = (minIdx!=null && maxIdx!=null) ? (maxIdx-minIdx) : null;
         var custoMedio = pr.custos.length ? pr.custos.reduce(function(s,v){return s+v;},0)/pr.custos.length : 0;
+        var rendMedioTxt = '—';
+        if(pr.rendimentos.length){
+          var mediaRend = pr.rendimentos.reduce(function(s,v){return s+v.valor;},0)/pr.rendimentos.length;
+          var sufixoRend = pr.rendimentos[0].sufixo;
+          rendMedioTxt = (Math.round(mediaRend*100)/100) + (sufixoRend ? ' ' + sufixoRend : '');
+        }
         var alerta = '';
         if(pr.count<2){ alerta = '<span class="lock-badge" style="background:var(--brass-bg); color:var(--brass);">poucos dados</span>'; }
         else if(variacao!=null && variacao>15){ alerta = '<span class="lock-badge" style="background:var(--warn-bg); color:var(--warn-txt);">variação alta</span>'; }
         else { alerta = '<span class="lock-badge" style="background:var(--ok-bg); color:var(--ok-txt);">consistente</span>'; }
         html += '<tr><td>' + escapeHtml(pr.titulo) + '</td><td>' + escapeHtml(marcaLabel(pr.marca)) + '</td>' +
           '<td class="num-cell">' + pr.count + '</td>' +
+          '<td class="num-cell">' + rendMedioTxt + '</td>' +
           '<td class="num-cell">' + (mediaIdx!=null ? (Math.round(mediaIdx*10)/10)+'%' : '—') + '</td>' +
           '<td class="num-cell">' + (variacao!=null ? (Math.round(variacao*10)/10)+' p.p.' : '—') + '</td>' +
           '<td class="num-cell">R$ ' + custoMedio.toFixed(2).replace('.',',') + '</td>' +
@@ -3593,12 +3634,13 @@
       html += '<div class="empty">Nenhum insumo encontrado com esse nome.</div>';
     } else {
       html += '<div style="font-size:11px; color:var(--muted); margin-top:8px;">Mostrando ' + nomesFiltrados.length + ' de ' + nomesInsumos.length + '</div>';
-      html += '<div class="table-scroll" style="margin-top:6px;"><table><thead><tr><th>Insumo</th><th>Preço (R$)</th><th>Unidade do preço</th></tr></thead><tbody>';
+      html += '<div class="table-scroll" style="margin-top:6px;"><table><thead><tr><th>Insumo</th><th>Preço (R$)</th><th>Unidade do preço</th><th></th></tr></thead><tbody>';
       nomesFiltrados.forEach(function(nome){
         var info = precosAtuais[nome] || {};
         html += '<tr><td>' + escapeHtml(nome) + '</td>' +
           '<td><input class="grid-input money" type="number" step="0.0001" min="0" data-preco-nome="' + escapeHtml(nome) + '" value="' + (info.preco!=null ? info.preco : '') + '"></td>' +
-          '<td><select class="grid-select" data-preco-unidade="' + escapeHtml(nome) + '">' + UNIDADES.map(function(u){ return '<option value="' + u + '"' + (u===info.unidade?' selected':'') + '>' + u + '</option>'; }).join('') + '</select></td></tr>';
+          '<td><select class="grid-select" data-preco-unidade="' + escapeHtml(nome) + '">' + UNIDADES.map(function(u){ return '<option value="' + u + '"' + (u===info.unidade?' selected':'') + '>' + u + '</option>'; }).join('') + '</select></td>' +
+          '<td><button class="btn" data-remover-insumo="' + escapeHtml(nome) + '" style="padding:4px 9px; font-size:11.5px;">Remover</button></td></tr>';
       });
       html += '</tbody></table></div>';
     }
@@ -3675,6 +3717,12 @@
     if(editandoCargo){ html += '<button class="btn" id="cargo-cancel">Cancelar</button>'; }
     html += '</div>';
     html += '</div>';
+    html += '</div>';
+
+    html += '<div style="height:16px"></div><div class="card">';
+    html += '<div style="font-weight:600; font-size:14px;">Manutenção de receitas</div>';
+    html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">O "rendimento teórico" digitado na ficha costuma ser um número redondo, estimado. O "Rendimento médio registrado" (que aparece ao abrir a receita) é calculado de verdade, a partir das produções lançadas. Esse botão limpa o teórico de todas as receitas de uma vez, para trabalhar só com a média real — que vai se formando conforme a equipe registra rendimento.</div>';
+    html += '<div style="margin-top:12px;"><button class="btn" id="limpar-rendimentos" style="border-color:var(--warn-txt); color:var(--warn-txt);">Limpar rendimento teórico de todas as receitas</button></div>';
     html += '</div>';
 
     html += '<div style="height:16px"></div><div class="card">';
@@ -3817,6 +3865,29 @@
       });
     }
 
+    main.querySelectorAll('[data-remover-insumo]').forEach(function(btn){
+      btn.onclick = async function(){
+        var nome = btn.getAttribute('data-remover-insumo');
+        var usadoEmReceita = cfgLoaded[3].some(function(it){
+          return it.tipo==='receita' && (it.ingredientes||[]).some(function(ing){ return ing.nome && ing.nome.trim().toLowerCase()===nome.trim().toLowerCase(); });
+        });
+        var aviso = usadoEmReceita
+          ? 'Esse insumo ainda está sendo usado em pelo menos uma receita — ele volta a aparecer na lista (sem preço) na próxima vez que alguém abrir essa tela. Remover mesmo assim o preço e a sugestão salva?'
+          : 'Remover este insumo da lista (preço e sugestão de nome)?';
+        if(!(await showConfirm(aviso, 'Remover'))) return;
+        var precos = await getData('insumos-precos', {});
+        var chavePreco = Object.keys(precos).find(function(k){ return k.toLowerCase()===nome.toLowerCase(); });
+        if(chavePreco) delete precos[chavePreco];
+        await setData('insumos-precos', precos);
+        var nomesSalvos = await getData('insumos-nomes', []);
+        nomesSalvos = nomesSalvos.filter(function(n){ return n.toLowerCase()!==nome.toLowerCase(); });
+        await setData('insumos-nomes', nomesSalvos);
+        logAudit('Ambas as unidades', 'Removeu insumo', nome);
+        showToast('Insumo removido.');
+        renderConfig(main);
+      };
+    });
+
     document.getElementById('nav-perm-save').onclick = async function(){
       var newPerms = {};
       NAV.filter(function(n){ return n.id!=='config'; }).forEach(function(n){
@@ -3900,6 +3971,20 @@
       'pedidos-folga','atestados-colaborador','sugestoes-ideias','sugestoes-compras','whatsapp-contatos','cargos-personalizados','producao-diaria',
       'producao-diaria-fixas','producao-diaria-removidos'];
 
+    document.getElementById('limpar-rendimentos').onclick = async function(){
+      var todosItens = await getConteudo();
+      var receitasComRendimento = todosItens.filter(function(x){ return x.tipo==='receita' && x.rendimento; });
+      if(receitasComRendimento.length===0){ showToast('Nenhuma receita tem rendimento teórico preenchido no momento.'); return; }
+      var msg = 'Isso vai apagar o rendimento teórico de ' + receitasComRendimento.length + ' receita(s). Os insumos e o modo de preparo continuam intactos — só o número de rendimento é limpo, e volta a ser preenchido pela média real conforme forem registrando produção. Continuar?';
+      if(!(await showConfirm(msg, 'Limpar rendimentos'))) return;
+      todosItens.forEach(function(x){ if(x.tipo==='receita'){ x.rendimento = ''; } });
+      var saved = await setData('conteudo', todosItens);
+      if(saved){
+        logAudit('Ambas as unidades', 'Limpou rendimento teórico de todas as receitas', receitasComRendimento.length + ' receita(s)');
+        showToast('Rendimento teórico limpo em ' + receitasComRendimento.length + ' receita(s).');
+      }
+    };
+
     document.getElementById('backup-export').onclick = async function(){
       var values = await Promise.all(BACKUP_KEYS.map(function(k){ return getData(k, null); }));
       var data = {};
@@ -3950,8 +4035,8 @@
               if(idx>-1){
                 existing[idx] = Object.assign({}, existing[idx], {
                   tipo: novoItem.tipo || existing[idx].tipo,
-                  corpo: novoItem.corpo || existing[idx].corpo,
-                  rendimento: novoItem.rendimento || existing[idx].rendimento,
+                  corpo: novoItem.hasOwnProperty('corpo') ? novoItem.corpo : existing[idx].corpo,
+                  rendimento: novoItem.hasOwnProperty('rendimento') ? novoItem.rendimento : existing[idx].rendimento,
                   ingredientes: (novoItem.ingredientes && novoItem.ingredientes.length) ? novoItem.ingredientes : existing[idx].ingredientes,
                   marca: novoItem.marca || existing[idx].marca
                 });
