@@ -103,6 +103,15 @@
 
   .lock-badge{display:inline-flex; align-items:center; gap:5px; font-size:11.5px; background:var(--brass-bg); color:var(--brass); padding:4px 10px; border-radius:20px; font-weight:600;}
 
+  .recipe-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(190px, 1fr)); gap:14px;}
+  .recipe-card{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden; cursor:pointer; box-shadow:var(--shadow-sm); transition:transform .12s, box-shadow .12s; display:flex; flex-direction:column;}
+  .recipe-card:hover{transform:translateY(-2px); box-shadow:var(--shadow-md);}
+  .recipe-card-img{width:100%; height:110px; object-fit:cover; background:var(--paper);}
+  .recipe-card-noimg{width:100%; height:110px; background:var(--paper); display:flex; align-items:center; justify-content:center; color:var(--line); font-size:34px;}
+  .recipe-card-body{padding:12px 13px 14px; flex:1; display:flex; flex-direction:column; gap:6px;}
+  .recipe-card-title{font-size:13.5px; font-weight:700; line-height:1.3; color:var(--ink);}
+  .recipe-card-badges{display:flex; gap:5px; flex-wrap:wrap; margin-top:auto;}
+
   .form-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-top:14px;}
   @media (max-width:820px){.form-grid{grid-template-columns:repeat(2,1fr);}}
   @media (max-width:520px){.form-grid{grid-template-columns:1fr;}}
@@ -1856,37 +1865,30 @@
     if(filtered.length===0){
       html += '<div class="card"><div class="empty">Nada encontrado com esse filtro.</div></div>';
     } else {
+      html += '<div class="recipe-grid">';
       filtered.slice().reverse().forEach(function(it){
-        html += '<div class="card" style="margin-bottom:14px;">';
-        html += '<div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px;">';
-        html += '<div class="item-title">' + escapeHtml(it.titulo) + '</div>';
-        html += '<div style="display:flex; gap:6px; flex-wrap:wrap;">' +
+        html += '<div class="recipe-card" data-recipe-open="' + it.id + '">';
+        if(it.imagem){ html += '<img class="recipe-card-img" src="' + it.imagem + '" alt="">'; }
+        else { html += '<div class="recipe-card-noimg"><i class="ti ' + (it.tipo==='receita' ? 'ti-tools-kitchen-2' : 'ti-clipboard-list') + '" aria-hidden="true"></i></div>'; }
+        html += '<div class="recipe-card-body">';
+        html += '<div class="recipe-card-title">' + escapeHtml(it.titulo) + '</div>';
+        html += '<div class="recipe-card-badges">' +
           '<span class="lock-badge">' + (it.tipo==='receita'?'Receita':'Processo') + '</span>' +
           '<span class="lock-badge" style="background:var(--ok-bg); color:var(--ok-txt);">' + escapeHtml(marcaLabel(it.marca)) + '</span>' +
-          (canEdit ? '<button class="btn" data-edit-item="' + it.id + '" style="padding:4px 9px; font-size:11.5px;">Editar</button>' : '') +
-          (canEdit ? '<button class="btn" data-remove-item="' + it.id + '" style="padding:4px 9px; font-size:11.5px;">Remover</button>' : '') +
-        '</div></div>';
-        if(it.rendimento){ html += '<div style="margin-top:8px; font-size:12.5px; font-weight:600; color:var(--ember);">Rendimento: ' + escapeHtml(it.rendimento) + '</div>'; }
-        if(it.ingredientes && it.ingredientes.length){
-          html += '<div style="margin-top:8px; font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.03em;">Insumos</div>';
-          html += '<ul style="margin:4px 0 0 18px; padding:0; font-size:13px; color:var(--ink-2);">';
-          it.ingredientes.forEach(function(ing){
-            html += '<li>' + escapeHtml(ing.quantidade||'') + ' ' + escapeHtml(ing.unidade||'') + ' de ' + escapeHtml(ing.nome) +
-              (ing.quantidadeBruta ? ' <span style="color:var(--muted); font-size:12px;">(compra bruta: ' + escapeHtml(String(ing.quantidadeBruta)) + ' ' + escapeHtml(ing.unidade||'') + ')</span>' : '') + '</li>';
-          });
-          html += '</ul>';
-          var custoInfo = calcularCustoIngredientes(it.ingredientes);
-          html += '<div style="margin-top:8px; font-size:13px; font-weight:700; color:var(--ink-2);">Custo estimado da ficha: R$ ' + custoInfo.total.toFixed(2).replace('.',',') +
-            (custoInfo.faltando>0 ? ' <span style="font-weight:500; color:var(--muted); font-size:11.5px;">(' + custoInfo.faltando + ' insumo(s) sem preço cadastrado)</span>' : '') + '</div>';
-        }
-        if(it.corpo){ html += '<div class="item-body" style="margin-top:8px;">' + escapeHtml(it.corpo) + '</div>'; }
-        if(it.imagem){ html += '<img src="' + it.imagem + '" alt="" style="max-width:260px; border-radius:8px; margin-top:10px; display:block;">'; }
-        if(it.anexoPdf){ html += '<button class="btn" data-open-pdf="' + it.id + '" style="margin-top:10px;"><i class="ti ti-file-type-pdf" aria-hidden="true"></i> Abrir PDF</button>'; }
-        html += '</div>';
+        '</div>';
+        html += '</div></div>';
       });
+      html += '</div>';
     }
 
     main.innerHTML = html;
+
+    main.querySelectorAll('[data-recipe-open]').forEach(function(cardEl){
+      cardEl.onclick = function(){
+        var it = filtered.find(function(x){ return x.id===cardEl.getAttribute('data-recipe-open'); });
+        if(it) abrirFichaDetalheModal(it, canEdit, tipoFixo, main);
+      };
+    });
 
     document.getElementById('ct-marca-select').addEventListener('change', function(){
       window.__ctMarca = this.value;
@@ -1896,12 +1898,6 @@
     buscaInput.addEventListener('change', function(){
       window.__ctBusca = this.value;
       renderFichasTab(main, tipoFixo);
-    });
-    main.querySelectorAll('[data-open-pdf]').forEach(function(b){
-      b.onclick = function(){
-        var it = items.find(function(x){ return x.id===b.getAttribute('data-open-pdf'); });
-        if(it && it.anexoPdf) openDataUrlInNewTab(it.anexoPdf);
-      };
     });
 
     if(canEdit){
@@ -2030,6 +2026,77 @@
     var chave = Object.keys(__insumoPrecos).find(function(k){ return k.toLowerCase()===nome.trim().toLowerCase(); });
     return chave ? __insumoPrecos[chave] : null;
   }
+
+  function abrirFichaDetalheModal(it, canEdit, tipoFixo, main){
+    var overlay = document.createElement('div');
+    overlay.className = 'form-modal-overlay';
+    var html = '<div class="form-modal-box">';
+    html += '<div class="form-modal-close"><button class="btn" id="fd-modal-close" style="padding:6px 10px;">✕</button></div>';
+    html += '<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap;">';
+    html += '<div style="font-weight:700; font-size:18px;">' + escapeHtml(it.titulo) + '</div>';
+    html += '<div style="display:flex; gap:6px; flex-wrap:wrap;">' +
+      '<span class="lock-badge">' + (it.tipo==='receita'?'Receita':'Processo') + '</span>' +
+      '<span class="lock-badge" style="background:var(--ok-bg); color:var(--ok-txt);">' + escapeHtml(marcaLabel(it.marca)) + '</span>' +
+    '</div></div>';
+
+    if(it.imagem){ html += '<img src="' + it.imagem + '" alt="" style="max-width:100%; border-radius:10px; margin-top:14px; display:block;">'; }
+    if(it.rendimento){ html += '<div style="margin-top:14px; font-size:13px; font-weight:600; color:var(--ember);">Rendimento: ' + escapeHtml(it.rendimento) + '</div>'; }
+
+    if(it.ingredientes && it.ingredientes.length){
+      html += '<div style="margin-top:14px; font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.03em;">Insumos</div>';
+      html += '<ul style="margin:6px 0 0 18px; padding:0; font-size:13.5px; color:var(--ink-2); line-height:1.7;">';
+      it.ingredientes.forEach(function(ing){
+        html += '<li>' + escapeHtml(ing.quantidade||'') + ' ' + escapeHtml(ing.unidade||'') + ' de ' + escapeHtml(ing.nome) +
+          (ing.quantidadeBruta ? ' <span style="color:var(--muted); font-size:12px;">(compra bruta: ' + escapeHtml(String(ing.quantidadeBruta)) + ' ' + escapeHtml(ing.unidade||'') + ')</span>' : '') + '</li>';
+      });
+      html += '</ul>';
+      var custoInfo = calcularCustoIngredientes(it.ingredientes);
+      html += '<div style="margin-top:10px; font-size:13.5px; font-weight:700; color:var(--ink-2);">Custo estimado da ficha: R$ ' + custoInfo.total.toFixed(2).replace('.',',') +
+        (custoInfo.faltando>0 ? ' <span style="font-weight:500; color:var(--muted); font-size:11.5px;">(' + custoInfo.faltando + ' insumo(s) sem preço cadastrado)</span>' : '') + '</div>';
+    }
+
+    if(it.corpo){
+      html += '<div style="margin-top:14px; font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.03em;">' + (it.tipo==='receita' ? 'Modo de preparo' : 'Passos') + '</div>';
+      html += '<div class="item-body" style="margin-top:6px; white-space:pre-wrap;">' + escapeHtml(it.corpo) + '</div>';
+    }
+    if(it.anexoPdf){ html += '<button class="btn" id="fd-open-pdf" style="margin-top:14px;"><i class="ti ti-file-type-pdf" aria-hidden="true"></i> Abrir PDF</button>'; }
+
+    if(canEdit){
+      html += '<div style="margin-top:20px; padding-top:14px; border-top:1px solid var(--line); display:flex; gap:10px;">';
+      html += '<button class="btn" id="fd-editar">Editar</button>';
+      html += '<button class="btn" id="fd-remover" style="border-color:var(--warn-txt); color:var(--warn-txt);">Remover</button>';
+      html += '</div>';
+    }
+    html += '</div>';
+
+    overlay.innerHTML = html;
+    document.body.appendChild(overlay);
+    function fechar(){ overlay.remove(); }
+    document.getElementById('fd-modal-close').onclick = fechar;
+    overlay.addEventListener('click', function(ev){ if(ev.target===overlay) fechar(); });
+
+    var pdfBtn = document.getElementById('fd-open-pdf');
+    if(pdfBtn){ pdfBtn.onclick = function(){ openDataUrlInNewTab(it.anexoPdf); }; }
+
+    if(canEdit){
+      document.getElementById('fd-editar').onclick = function(){
+        fechar();
+        window.__ctEditingId = it.id;
+        window.__ctShowForm = true;
+        renderFichasTab(main, tipoFixo);
+      };
+      document.getElementById('fd-remover').onclick = async function(){
+        if(!(await showConfirm('Remover este item?', 'Remover'))) return;
+        var all = await getConteudo();
+        all = all.filter(function(x){ return x.id!==it.id; });
+        var saved = await setData('conteudo', all);
+        if(saved){ logAudit(it.marca==='todas' ? 'Ambas as unidades' : it.marca, 'Removeu item', it.titulo); }
+        fechar();
+        renderFichasTab(main, tipoFixo);
+      };
+    }
+  }
+
 
   function abrirDetalheRendimento(p, receitaTitulo, marca){
     var custoInfo = calcularCustoIngredientes(p.ingredientes||[]);
