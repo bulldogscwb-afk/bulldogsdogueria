@@ -1820,6 +1820,9 @@
     html += '<div class="form-field" style="max-width:280px; flex:1; min-width:200px; margin:0;"><label>Buscar por nome</label><input class="grid-input wide" style="width:100%;" type="text" id="ct-busca" placeholder="Ex: molho, frango…" value="' + escapeHtml(busca) + '"></div>';
     if(canEdit){
       html += '<button class="btn primary" id="ct-show-form" style="height:38px;"><i class="ti ti-plus" aria-hidden="true"></i> Novo(a) ' + rotuloTipo + '</button>';
+      if(tipoFixo==='receita'){
+        html += '<button class="btn" id="ct-gerar-arte" style="height:38px;">Gerar arte para receitas sem foto</button>';
+      }
     }
     html += '</div>';
 
@@ -1903,6 +1906,25 @@
     if(canEdit){
       var showFormBtn = document.getElementById('ct-show-form');
       if(showFormBtn){ showFormBtn.onclick = function(){ window.__ctShowForm = true; renderFichasTab(main, tipoFixo); }; }
+
+      var gerarArteBtn = document.getElementById('ct-gerar-arte');
+      if(gerarArteBtn){
+        gerarArteBtn.onclick = async function(){
+          var todos = await getConteudo();
+          var semFoto = todos.filter(function(x){ return x.tipo==='receita' && !x.imagem; });
+          if(semFoto.length===0){ showToast('Todas as receitas já têm foto.'); return; }
+          if(!(await showConfirm('Gerar uma arte com o nome de cada uma das ' + semFoto.length + ' receita(s) sem foto?', 'Gerar arte'))) return;
+          todos.forEach(function(x){
+            if(x.tipo==='receita' && !x.imagem){ x.imagem = gerarArteReceitaSvg(x.titulo); }
+          });
+          var saved = await setData('conteudo', todos);
+          if(saved){
+            logAudit('Ambas as unidades', 'Gerou arte automática para receitas', semFoto.length + ' receita(s)');
+            showToast('Arte gerada em ' + semFoto.length + ' receita(s).');
+          }
+          renderFichasTab(main, tipoFixo);
+        };
+      }
 
       function fecharModalItem(){ window.__ctEditingId = null; window.__ctShowForm = false; renderFichasTab(main, tipoFixo); }
       var cancelBtn = document.getElementById('item-cancel');
@@ -4229,6 +4251,43 @@
     return String(s==null?'':s).replace(/[&<>"']/g, function(c){
       return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
     });
+  }
+
+  function escapeSvgTexto(s){
+    return String(s==null?'':s).replace(/[&<>]/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];
+    });
+  }
+
+  function gerarArteReceitaSvg(titulo){
+    var palavras = String(titulo||'').trim().split(/\s+/);
+    var linhas = [];
+    var atual = '';
+    palavras.forEach(function(p){
+      var teste = atual ? atual + ' ' + p : p;
+      if(teste.length > 15 && atual){ linhas.push(atual); atual = p; }
+      else { atual = teste; }
+    });
+    if(atual) linhas.push(atual);
+    if(linhas.length > 4){ linhas = linhas.slice(0,4); linhas[3] += '…'; }
+
+    var fontSize = linhas.length >= 3 ? 24 : (linhas.length === 2 ? 30 : 36);
+    var lineHeight = fontSize * 1.28;
+    var startY = 115 - ((linhas.length-1) * lineHeight / 2);
+
+    var tspans = linhas.map(function(linha, i){
+      return '<tspan x="200" y="' + (startY + i*lineHeight).toFixed(1) + '">' + escapeSvgTexto(linha) + '</tspan>';
+    }).join('');
+
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 220">' +
+      '<defs><linearGradient id="bgrad" x1="0" y1="0" x2="1" y2="1">' +
+      '<stop offset="0%" stop-color="#221F1D"/><stop offset="100%" stop-color="#161514"/>' +
+      '</linearGradient></defs>' +
+      '<rect width="400" height="220" fill="url(#bgrad)"/>' +
+      '<rect x="18" y="18" width="364" height="184" fill="none" stroke="#F5821F" stroke-width="1.5"/>' +
+      '<text font-family="Georgia, \'Times New Roman\', serif" font-style="italic" font-weight="600" font-size="' + fontSize + '" fill="#F5F5F4" text-anchor="middle">' + tspans + '</text>' +
+      '</svg>';
+    return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
   }
 
   document.addEventListener('click', function(ev){
