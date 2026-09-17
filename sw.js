@@ -5,7 +5,7 @@
 // atualização. Dados de motoboys/caixa/colaboradores etc. nunca ficam em
 // cache — sempre vêm direto do Supabase.
 
-var CACHE_NAME = 'central-gestao-v2';
+var CACHE_NAME = 'central-gestao-v3';
 var SHELL_FILES = ['./', './index.html', './manifest.json', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', function(event){
@@ -36,8 +36,16 @@ self.addEventListener('fetch', function(event){
     return;
   }
 
+  // Para o documento principal (index.html) e navegações, força ignorar
+  // completamente o cache HTTP do navegador — não só o cache do service
+  // worker. Sem isso, o navegador pode devolver uma cópia antiga do
+  // index.html mesmo quando o código aqui pede a versão mais nova.
+  var fetchOptions = (event.request.mode === 'navigate' || url.indexOf('index.html') !== -1)
+    ? {cache: 'no-store'}
+    : {};
+
   event.respondWith(
-    fetch(event.request)
+    fetch(event.request, fetchOptions)
       .then(function(response){
         // Deu certo buscar na internet: usa essa versão e atualiza o cache
         // pra próxima vez que estiver offline.
