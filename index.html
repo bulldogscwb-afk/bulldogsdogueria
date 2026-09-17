@@ -300,6 +300,7 @@
     {id:'dashboard', label:'Visão geral', icon:'ti-chart-bar', roles:['dono','gerente']},
     {id:'motoboys', label:'Motoboys', icon:'ti-motorbike', roles:['dono','gerente','supervisor','caixa']},
     {id:'fechamento', label:'Fechamento de caixa', icon:'ti-cash', roles:['dono','gerente','caixa']},
+    {id:'bebidas', label:'Estoque · Bebidas', icon:'ti-fridge', roles:['dono','gerente','supervisor','equipe','caixa']},
     {id:'documentos', label:'Documentos', icon:'ti-folder', roles:['dono','gerente']},
     {id:'conteudo', label:'Receitas & Processos', icon:'ti-book-2', roles:['dono','gerente','supervisor','equipe','caixa']},
     {id:'regra-tres', label:'Regra de três', icon:'ti-calculator', roles:['dono','gerente','supervisor','equipe','caixa']},
@@ -322,6 +323,10 @@
       {id:'planejarproducao', label:'Planejar produção'},
       {id:'rendimento', label:'Registrar rendimento'},
       {id:'verificacao', label:'Verificação geral'}
+    ],
+    bebidas: [
+      {id:'fechamento', label:'Fechamento diário'},
+      {id:'cadastro', label:'Bebidas cadastradas'}
     ]
   };
   function subTabsPermitidas(navId, todasIds){
@@ -330,6 +335,7 @@
     if(cargo && cargo.subTabs && cargo.subTabs[navId]){ return cargo.subTabs[navId]; }
     if(user.role==='gerente') return todasIds;
     if(navId==='motoboys') return ['daily'];
+    if(navId==='bebidas') return ['fechamento'];
     if(navId==='conteudo') return todasIds.filter(function(id){ return id!=='verificacao' && id!=='planejarproducao'; });
     return todasIds;
   }
@@ -751,6 +757,7 @@
     if(currentPage === 'dashboard') await renderDashboard(main);
     else if(currentPage === 'motoboys') await renderMotoboys(main);
     else if(currentPage === 'fechamento') await renderFechamento(main);
+    else if(currentPage === 'bebidas') await renderBebidas(main);
     else if(currentPage === 'documentos') await renderDocumentos(main);
     else if(currentPage === 'conteudo') await renderConteudo(main);
     else if(currentPage === 'regra-tres') await renderRegraTres(main);
@@ -1562,6 +1569,316 @@
           setTimeout(function(){ renderFechamento(main); }, 900);
         };
       }
+    }
+  }
+
+  // ============ ESTOQUE · BEBIDAS (fechamento diário da geladeira) ============
+  function bebidaFechKey(unit, date){ return unit + '_' + date; }
+
+  function saldoAnteriorParaBebida(unit, date, bebidaId, fechamentos){
+    var prefix = unit + '_';
+    var melhorData = null, melhorRec = null;
+    Object.keys(fechamentos).forEach(function(k){
+      if(k.indexOf(prefix)!==0) return;
+      var d = k.substring(prefix.length);
+      if(d < date && (!melhorData || d > melhorData)){ melhorData = d; melhorRec = fechamentos[k]; }
+    });
+    if(!melhorRec || !melhorRec.itens) return null;
+    var item = melhorRec.itens.find(function(it){ return it.bebidaId===bebidaId; });
+    return (item && item.contagem!=null) ? item.contagem : null;
+  }
+
+  async function renderBebidas(main){
+    var todasAbas = SUBTABS_REGISTRY.bebidas;
+    var permitidas = subTabsPermitidas('bebidas', todasAbas.map(function(t){ return t.id; }));
+    var abasVisiveis = todasAbas.filter(function(t){ return permitidas.indexOf(t.id)!==-1; });
+    if(abasVisiveis.length===0){ main.innerHTML = '<div class="card"><div class="empty">Nenhuma aba liberada para o seu cargo aqui. Peça ao Dono para revisar em Configurações → Cargos personalizados.</div></div>'; return; }
+    var tab = window.__bbTab || abasVisiveis[0].id;
+    if(permitidas.indexOf(tab)===-1) tab = abasVisiveis[0].id;
+    var subtitulos = {fechamento:'Contagem e abastecimento da geladeira, 1x ao dia', cadastro:'Bebidas controladas, por unidade'};
+    var html = pageHead('Estoque · Bebidas', subtitulos[tab] || '');
+
+    if(abasVisiveis.length>1){
+      html += '<div class="unit-toggle" style="margin-bottom:20px; width:fit-content; flex-wrap:wrap;">';
+      abasVisiveis.forEach(function(t){
+        html += '<button data-bb-tab="' + t.id + '" class="' + (tab===t.id?'active':'') + '">' + t.label + '</button>';
+      });
+      html += '</div>';
+    }
+    html += '<div id="bb-tab-content"></div>';
+    main.innerHTML = html;
+
+    main.querySelectorAll('[data-bb-tab]').forEach(function(b){
+      b.onclick = function(){ window.__bbTab = b.getAttribute('data-bb-tab'); renderBebidas(main); };
+    });
+
+    var content = document.getElementById('bb-tab-content');
+    if(tab==='cadastro'){ await renderBebidasCadastro(content); }
+    else { await renderBebidasFechamento(content); }
+  }
+
+  async function renderBebidasFechamento(main){
+    var isManagerRole = (user.role==='dono' || user.role==='gerente');
+    var canPickUnit = user.role==='dono';
+    var viewUnit = canPickUnit ? (window.__bbUnit || 'unidade1') : user.unit;
+    window.__bbUnit = viewUnit;
+    var viewDate = window.__bbDate || todayISO();
+
+    var key = bebidaFechKey(viewUnit, viewDate);
+    var loaded = await Promise.all([
+      getData('bebidas-cadastro', []),
+      getData('bebidas-fechamentos', {}),
+      getData('bebidas-fechamento-status', {})
+    ]);
+    var cadastro = loaded[0].filter(function(b){ return (b.unit===viewUnit || b.unit==='ambas') && b.ativo!==false; });
+    var fechamentos = loaded[1];
+    var statusAll = loaded[2];
+    var rec = fechamentos[key] || null;
+    var status = statusAll[key] || null;
+    var locked = !!(status && status.closed);
+    var canEdit = locked ? isManagerRole : true;
+
+    function itemFor(bebidaId){
+      if(rec && rec.itens){
+        var f = rec.itens.find(function(it){ return it.bebidaId===bebidaId; });
+        if(f) return f;
+      }
+      var saldoAnt = saldoAnteriorParaBebida(viewUnit, viewDate, bebidaId, fechamentos);
+      return {bebidaId: bebidaId, saldoAnterior: saldoAnt, abastecimento: 0, contagem: null};
+    }
+
+    var html = '';
+
+    if(canPickUnit){
+      html += '<div class="unit-toggle" style="margin-bottom:14px; width:fit-content;">';
+      UNITS.forEach(function(u){
+        html += '<button data-unit="' + u.id + '" class="' + (viewUnit===u.id?'active':'') + '">' + u.label + '</button>';
+      });
+      html += '</div>';
+    }
+
+    if(cadastro.length===0){
+      html += '<div class="card"><div class="empty">Nenhuma bebida cadastrada para esta unidade ainda. Peça ao Dono/Gerente para cadastrar na aba "Bebidas cadastradas".</div></div>';
+      main.innerHTML = html;
+      if(canPickUnit){
+        main.querySelectorAll('.unit-toggle button[data-unit]').forEach(function(b){
+          b.onclick = function(){ window.__bbUnit = b.getAttribute('data-unit'); renderBebidasFechamento(main); };
+        });
+      }
+      return;
+    }
+
+    if(locked){
+      html += '<div class="card" style="margin-bottom:14px; background:var(--warn-bg); border-color:var(--warn-txt);">';
+      html += '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">';
+      html += '<div style="font-size:13px; color:var(--warn-txt); font-weight:600;"><i class="ti ti-lock" aria-hidden="true"></i> Fechamento finalizado por ' + escapeHtml(status.closedBy) + ' em ' + fmtDateTime(status.closedAt) + (isManagerRole ? ' · você pode editar por ser Dono/Gerente' : ' · somente Dono/Gerente podem editar agora') + '</div>';
+      if(isManagerRole){ html += '<button class="btn" id="bb-reopen">Reabrir para edição</button>'; }
+      html += '</div></div>';
+    }
+
+    html += '<div class="card">';
+    html += '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:6px;">';
+    html += '<div style="font-weight:600; font-size:14px;">' + labelUnit(viewUnit) + '</div>';
+    html += '<div class="form-field" style="margin:0;"><label for="bb-date">Data</label><input type="date" id="bb-date" value="' + viewDate + '"></div>';
+    html += '</div>';
+    html += '<div style="font-size:11.5px; color:var(--muted); margin-bottom:10px;">"Saiu" = saldo anterior + abastecido − contagem de hoje. Compare esse número com o que o PDV registrou como vendido.</div>';
+
+    html += '<div style="overflow-x:auto;"><table class="table-hardgrid"><thead><tr><th>Bebida</th><th>Saldo anterior</th><th>Abasteceu hoje</th><th>Contagem hoje</th><th>Saiu (calculado)</th></tr></thead><tbody id="bb-tbody">';
+
+    cadastro.forEach(function(b){
+      var it = itemFor(b.id);
+      var temHistorico = it.saldoAnterior != null;
+      var saldoCell = temHistorico
+        ? '<span>' + it.saldoAnterior + '</span>'
+        : (canEdit
+          ? '<input class="grid-input" style="width:70px;" type="number" min="0" step="1" data-bb-field="saldoAnterior" data-bb-id="' + b.id + '" value="' + (it.saldoAnterior!=null? it.saldoAnterior : 0) + '" placeholder="inicial">'
+          : '<span>—</span>');
+      var abastCell = canEdit
+        ? '<input class="grid-input" style="width:70px;" type="number" min="0" step="1" data-bb-field="abastecimento" data-bb-id="' + b.id + '" value="' + (it.abastecimento||0) + '">'
+        : '<span>' + (it.abastecimento||0) + '</span>';
+      var contCell = canEdit
+        ? '<input class="grid-input" style="width:70px;" type="number" min="0" step="1" data-bb-field="contagem" data-bb-id="' + b.id + '" value="' + (it.contagem!=null? it.contagem : '') + '" placeholder="contar">'
+        : '<span>' + (it.contagem!=null? it.contagem : '—') + '</span>';
+      html += '<tr><td>' + escapeHtml(b.nome) + (temHistorico ? '' : ' <span style="font-size:10.5px; color:var(--muted);">(primeira vez · informe o estoque inicial)</span>') + '</td><td>' + saldoCell + '</td><td>' + abastCell + '</td><td>' + contCell + '</td><td><span class="saldo-pill" id="bb-saiu-' + b.id + '">—</span></td></tr>';
+    });
+
+    html += '</tbody></table></div>';
+
+    if(canEdit){
+      html += '<div style="margin-top:16px; display:flex; gap:10px; flex-wrap:wrap;"><button class="btn primary" id="bb-save">Salvar fechamento</button>';
+      if(!locked){ html += '<button class="btn" id="bb-finalize" style="border-color:var(--ember); color:var(--ember);"><i class="ti ti-lock" aria-hidden="true"></i> Finalizar fechamento</button>'; }
+      html += '</div>';
+    }
+    html += '</div>';
+
+    main.innerHTML = html;
+
+    function calcSaiu(bebidaId){
+      var it = itemFor(bebidaId);
+      var saldoInput = document.querySelector('[data-bb-field="saldoAnterior"][data-bb-id="' + bebidaId + '"]');
+      var saldoAnt = saldoInput ? (parseFloat(saldoInput.value)||0) : (it.saldoAnterior!=null ? it.saldoAnterior : 0);
+      var abastInput = document.querySelector('[data-bb-field="abastecimento"][data-bb-id="' + bebidaId + '"]');
+      var abast = abastInput ? (parseFloat(abastInput.value)||0) : (it.abastecimento||0);
+      var contInput = document.querySelector('[data-bb-field="contagem"][data-bb-id="' + bebidaId + '"]');
+      var cont = contInput && contInput.value!=='' ? parseFloat(contInput.value) : null;
+      var pill = document.getElementById('bb-saiu-' + bebidaId);
+      if(!pill) return;
+      if(cont==null){ pill.textContent = '—'; pill.className = 'saldo-pill'; return; }
+      var saiu = saldoAnt + abast - cont;
+      pill.textContent = saiu;
+      pill.className = 'saldo-pill ' + (saiu>=0 ? 'pos' : 'neg');
+    }
+    cadastro.forEach(function(b){ calcSaiu(b.id); });
+
+    if(canPickUnit){
+      main.querySelectorAll('.unit-toggle button[data-unit]').forEach(function(btn){
+        btn.onclick = function(){ window.__bbUnit = btn.getAttribute('data-unit'); renderBebidasFechamento(main); };
+      });
+    }
+    document.getElementById('bb-date').onchange = function(ev){
+      window.__bbDate = ev.target.value || todayISO();
+      renderBebidasFechamento(main);
+    };
+
+    var reopenBtn = document.getElementById('bb-reopen');
+    if(reopenBtn){
+      reopenBtn.onclick = async function(){
+        var allStatus = await getData('bebidas-fechamento-status', {});
+        delete allStatus[key];
+        var saved = await setData('bebidas-fechamento-status', allStatus);
+        if(saved){ logAudit(viewUnit, 'Reabriu fechamento de bebidas', viewDate); }
+        renderBebidasFechamento(main);
+      };
+    }
+
+    if(canEdit){
+      main.querySelectorAll('[data-bb-field]').forEach(function(inp){
+        inp.addEventListener('input', function(){ calcSaiu(inp.getAttribute('data-bb-id')); });
+      });
+
+      function coletarItens(){
+        return cadastro.map(function(b){
+          var it = itemFor(b.id);
+          var saldoInput = document.querySelector('[data-bb-field="saldoAnterior"][data-bb-id="' + b.id + '"]');
+          var saldoAnt = saldoInput ? (parseFloat(saldoInput.value)||0) : (it.saldoAnterior!=null ? it.saldoAnterior : 0);
+          var abastInput = document.querySelector('[data-bb-field="abastecimento"][data-bb-id="' + b.id + '"]');
+          var abast = abastInput ? (parseFloat(abastInput.value)||0) : 0;
+          var contInput = document.querySelector('[data-bb-field="contagem"][data-bb-id="' + b.id + '"]');
+          var cont = contInput && contInput.value!=='' ? parseFloat(contInput.value) : null;
+          var saiu = cont!=null ? (saldoAnt + abast - cont) : null;
+          return {bebidaId: b.id, nome: b.nome, saldoAnterior: saldoAnt, abastecimento: abast, contagem: cont, saiu: saiu};
+        });
+      }
+
+      document.getElementById('bb-save').onclick = async function(){
+        var itens = coletarItens();
+        var faltando = itens.filter(function(it){ return it.contagem==null; });
+        if(faltando.length>0){
+          if(!(await showConfirm('Faltam ' + faltando.length + ' bebida(s) sem contagem preenchida. Salvar assim mesmo?', 'Salvar mesmo assim'))) return;
+        }
+        var all = await getData('bebidas-fechamentos', {});
+        all[key] = {itens: itens, responsavel: labelRole(user.role), criadoEm: new Date().toISOString()};
+        var saved = await setData('bebidas-fechamentos', all);
+        if(!saved) return;
+        logAudit(viewUnit, 'Salvou fechamento de bebidas', viewDate + ' · ' + itens.length + ' ite(ns)');
+        var btn = document.getElementById('bb-save');
+        btn.textContent = 'Salvo ✓';
+        setTimeout(function(){ renderBebidasFechamento(main); }, 700);
+      };
+
+      var finalizeBtn = document.getElementById('bb-finalize');
+      if(finalizeBtn){
+        finalizeBtn.onclick = async function(){
+          var itens = coletarItens();
+          var faltando = itens.filter(function(it){ return it.contagem==null; });
+          if(faltando.length>0){
+            showToast('Preencha a contagem de todas as bebidas antes de finalizar.', 'error');
+            return;
+          }
+          if(!(await showConfirm('Finalizar o fechamento de bebidas de ' + labelUnit(viewUnit) + ' · ' + viewDate + '? Depois disso só Dono ou Gerente podem editar.', 'Finalizar'))) return;
+          var all = await getData('bebidas-fechamentos', {});
+          all[key] = {itens: itens, responsavel: labelRole(user.role), criadoEm: new Date().toISOString()};
+          var saved1 = await setData('bebidas-fechamentos', all);
+          if(!saved1) return;
+          var allStatus = await getData('bebidas-fechamento-status', {});
+          allStatus[key] = {closed:true, closedBy:labelRole(user.role), closedAt:new Date().toISOString()};
+          var saved2 = await setData('bebidas-fechamento-status', allStatus);
+          if(!saved2) return;
+          logAudit(viewUnit, 'Finalizou fechamento de bebidas', viewDate + ' · ' + itens.length + ' ite(ns)');
+          finalizeBtn.innerHTML = '<i class="ti ti-check" aria-hidden="true"></i> Fechamento finalizado ✓';
+          finalizeBtn.disabled = true;
+          setTimeout(function(){ renderBebidasFechamento(main); }, 900);
+        };
+      }
+    }
+  }
+
+  async function renderBebidasCadastro(main){
+    var canEdit = isAdmin();
+    var lista = await getData('bebidas-cadastro', []);
+    var html = '<div class="card">';
+    html += '<div style="font-weight:600; font-size:14px; margin-bottom:12px;">Bebidas cadastradas</div>';
+    if(canEdit){
+      html += '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px;">';
+      html += '<input class="grid-input wide" style="width:220px;" type="text" id="bb-cad-nome" placeholder="Nome da bebida">';
+      html += '<select class="grid-select" id="bb-cad-unit"><option value="unidade1">Unidade 1</option><option value="unidade2">Unidade 2</option><option value="ambas">Ambas as unidades</option></select>';
+      html += '<button class="btn primary" id="bb-cad-add">Adicionar</button>';
+      html += '</div>';
+    }
+    if(lista.length===0){
+      html += '<div class="empty">Nenhuma bebida cadastrada ainda.</div>';
+    } else {
+      html += '<div style="overflow-x:auto;"><table class="table-hardgrid"><thead><tr><th>Nome</th><th>Unidade</th><th>Status</th>' + (canEdit?'<th></th>':'') + '</tr></thead><tbody>';
+      lista.forEach(function(b){
+        html += '<tr><td>' + escapeHtml(b.nome) + '</td><td>' + (b.unit==='ambas'?'Ambas':labelUnit(b.unit)) + '</td><td>' + (b.ativo!==false?'Ativa':'Inativa') + '</td>';
+        if(canEdit){
+          html += '<td style="display:flex; gap:6px; flex-wrap:wrap;"><button class="btn" data-bb-toggle="' + b.id + '" style="padding:4px 8px; font-size:12px;">' + (b.ativo!==false?'Desativar':'Reativar') + '</button><button class="btn" data-bb-del="' + b.id + '" style="padding:4px 8px; font-size:12px;">Remover</button></td>';
+        }
+        html += '</tr>';
+      });
+      html += '</tbody></table></div>';
+    }
+    html += '</div>';
+    main.innerHTML = html;
+
+    if(canEdit){
+      document.getElementById('bb-cad-add').onclick = async function(){
+        var nomeEl = document.getElementById('bb-cad-nome');
+        var nome = nomeEl.value.trim();
+        if(!nome){ showToast('Digite o nome da bebida.', 'error'); return; }
+        var unit = document.getElementById('bb-cad-unit').value;
+        var all = await getData('bebidas-cadastro', []);
+        all.push({id: 'bb_' + Date.now() + '_' + Math.random().toString(36).slice(2,7), nome: nome, unit: unit, ativo: true, criadoEm: new Date().toISOString()});
+        var saved = await setData('bebidas-cadastro', all);
+        if(!saved) return;
+        logAudit(unit==='ambas'?'unidade1':unit, 'Cadastrou bebida', nome);
+        renderBebidasCadastro(main);
+      };
+      main.querySelectorAll('[data-bb-toggle]').forEach(function(btn){
+        btn.onclick = async function(){
+          var id = btn.getAttribute('data-bb-toggle');
+          var all = await getData('bebidas-cadastro', []);
+          var item = all.find(function(x){ return x.id===id; });
+          if(!item) return;
+          item.ativo = item.ativo===false ? true : false;
+          var saved = await setData('bebidas-cadastro', all);
+          if(!saved) return;
+          renderBebidasCadastro(main);
+        };
+      });
+      main.querySelectorAll('[data-bb-del]').forEach(function(btn){
+        btn.onclick = async function(){
+          var id = btn.getAttribute('data-bb-del');
+          var all = await getData('bebidas-cadastro', []);
+          var item = all.find(function(x){ return x.id===id; });
+          if(!item) return;
+          if(!(await showConfirm('Remover "' + item.nome + '" da lista de bebidas? O histórico de fechamentos anteriores não é apagado.', 'Remover'))) return;
+          all = all.filter(function(x){ return x.id!==id; });
+          var saved = await setData('bebidas-cadastro', all);
+          if(!saved) return;
+          renderBebidasCadastro(main);
+        };
+      });
     }
   }
 
@@ -4122,7 +4439,7 @@
       'motoboys-turno-status','motoboys-turno-removidos','caixa-fechamento','caixa-fechamento-status','conteudo','nav-permissions','avaliacoes',
       'colaboradores-avaliacao','insumos-cadastro','insumos-nomes','insumos-precos','checklist-status','audit-log','users-list',
       'pedidos-folga','atestados-colaborador','sugestoes-ideias','sugestoes-compras','whatsapp-contatos','cargos-personalizados','producao-diaria',
-      'producao-diaria-fixas','producao-diaria-removidos'];
+      'producao-diaria-fixas','producao-diaria-removidos','bebidas-cadastro','bebidas-fechamentos','bebidas-fechamento-status'];
 
     document.getElementById('limpar-rendimentos').onclick = async function(){
       var todosItens = await getConteudo();
