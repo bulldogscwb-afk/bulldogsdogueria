@@ -2128,7 +2128,7 @@
   }
 
 
-  function abrirDetalheRendimento(p, receitaTitulo, marca){
+  function abrirDetalheRendimento(p, receitaTitulo, marca, receitaId, onRemovido){
     var custoInfo = calcularCustoIngredientes(p.ingredientes||[]);
     var peso = calcularPesoTotalKg(p.ingredientes||[]);
     var obtido = parseRendimentoNumero(p.rendimentoTotal);
@@ -2158,6 +2158,13 @@
     html += statCard('Índice de rendimento', indice!=null ? (Math.round(indice*10)/10)+'%' : '—', false);
     html += '</div>';
     html += '<div style="margin-top:14px;">' + statCard('Custo estimado do lote', custoInfo.total, true) + '</div>';
+
+    if(user.role==='dono' && receitaId){
+      html += '<div style="margin-top:20px; padding-top:14px; border-top:1px solid var(--line);">';
+      html += '<button class="btn" id="rd-remover" style="border-color:var(--warn-txt); color:var(--warn-txt);">Apagar este registro de rendimento</button>';
+      html += '<div style="font-size:11px; color:var(--muted); margin-top:6px;">Só o Dono vê essa opção. Isso apaga só esse lote específico — o resto do histórico não é afetado.</div>';
+      html += '</div>';
+    }
     html += '</div>';
 
     overlay.innerHTML = html;
@@ -2165,6 +2172,25 @@
     function fechar(){ overlay.remove(); }
     document.getElementById('rd-modal-close').onclick = fechar;
     overlay.addEventListener('click', function(ev){ if(ev.target===overlay) fechar(); });
+
+    var removerBtn = document.getElementById('rd-remover');
+    if(removerBtn){
+      removerBtn.onclick = async function(){
+        if(!(await showConfirm('Apagar este registro de rendimento de "' + receitaTitulo + '" (' + p.data + ')? Essa ação não pode ser desfeita.', 'Apagar registro'))) return;
+        var all = await getConteudo();
+        var idx = all.findIndex(function(x){ return x.id===receitaId; });
+        if(idx>-1){
+          all[idx].producoes = (all[idx].producoes||[]).filter(function(x){ return x.id!==p.id; });
+          var saved = await setData('conteudo', all);
+          if(saved){
+            logAudit(marca==='todas' ? 'Ambas as unidades' : marca, 'Apagou registro de rendimento', receitaTitulo + ' · ' + p.data);
+            showToast('Registro apagado.');
+          }
+        }
+        fechar();
+        if(onRemovido) onRemovido();
+      };
+    }
   }
 
   function calcularCustoIngredientes(ingredientes){
@@ -2208,11 +2234,11 @@
     '</div>';
   }
 
-  function insumoExtraRowHtml(){
-    var opts = '<option value="">Selecionar insumo…</option>' + __insumoSuggestions.map(function(n){ return '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</option>'; }).join('');
+  function insumoExtraRowHtml(nome, quantidade, unidade){
+    var opts = '<option value="">Selecionar insumo…</option>' + __insumoSuggestions.map(function(n){ return '<option value="' + escapeHtml(n) + '"' + (n===nome?' selected':'') + '>' + escapeHtml(n) + '</option>'; }).join('');
     return '<div class="ingred-row" style="display:flex; gap:6px; margin-bottom:10px; flex-wrap:wrap; align-items:flex-end;">' +
-      '<div><label style="display:block; font-size:10px; color:var(--muted); margin-bottom:2px;">Qtd</label><input class="grid-input" style="width:75px;" type="number" step="0.01" min="0" data-fing-field="quantidade" placeholder="Qtd"></div>' +
-      '<div><label style="display:block; font-size:10px; color:var(--muted); margin-bottom:2px;">Unid.</label><select class="grid-select" style="width:75px;" data-fing-field="unidade">' + UNIDADES.map(function(u){ return '<option value="' + u + '">' + u + '</option>'; }).join('') + '</select></div>' +
+      '<div><label style="display:block; font-size:10px; color:var(--muted); margin-bottom:2px;">Qtd</label><input class="grid-input" style="width:75px;" type="number" step="0.01" min="0" data-fing-field="quantidade" placeholder="Qtd" value="' + (quantidade!=null && quantidade!==''? escapeHtml(String(quantidade)) : '') + '"></div>' +
+      '<div><label style="display:block; font-size:10px; color:var(--muted); margin-bottom:2px;">Unid.</label><select class="grid-select" style="width:75px;" data-fing-field="unidade">' + UNIDADES.map(function(u){ return '<option value="' + u + '"' + (u===unidade?' selected':'') + '>' + u + '</option>'; }).join('') + '</select></div>' +
       '<div style="flex:1; min-width:160px;"><label style="display:block; font-size:10px; color:var(--muted); margin-bottom:2px;">Insumo</label><select class="grid-select" style="width:100%;" data-fing-field="nome">' + opts + '</select></div>' +
       '<button type="button" class="btn ingred-remove-btn" style="padding:8px 9px;">×</button>' +
     '</div>';
@@ -2420,7 +2446,7 @@
     main.querySelectorAll('[data-vf-idx]').forEach(function(row){
       row.onclick = function(){
         var r = registros[parseInt(row.getAttribute('data-vf-idx'), 10)];
-        if(r && r._producao) abrirDetalheRendimento(r._producao, r.receitaTitulo, r.marca);
+        if(r && r._producao) abrirDetalheRendimento(r._producao, r.receitaTitulo, r.marca, r.receitaId, function(){ renderVerificacaoTab(main); });
       };
     });
 
@@ -2680,6 +2706,7 @@
     html += '<div id="rend-preparo-box" style="display:none;" class="card"></div>';
 
     html += '<div style="margin-top:14px;">';
+    html += '<div id="rend-rascunho-aviso" style="display:none; background:var(--ok-bg); color:var(--ok-txt); border-radius:8px; padding:10px 12px; margin-bottom:12px; font-size:12.5px;"></div>';
     html += '<div id="rend-escala-box" class="card" style="background:var(--paper); display:none;"></div>';
     html += '<label style="display:block; font-size:11.5px; color:var(--muted); font-weight:600; margin-top:14px; margin-bottom:6px;">Insumos da receita</label>';
     html += '<div id="rend-ing-rows"><div class="empty" style="padding:14px;">Escolha uma receita acima para ver os insumos dela.</div></div>';
@@ -2716,6 +2743,56 @@
     var receitaAtual = null;
     var baseQuantidades = {}; // nome do insumo (minúsculo) -> quantidade teórica da ficha
     var baseBrutos = {}; // nome do insumo (minúsculo) -> quantidade bruta teórica da ficha
+
+    function coletarLinhasParaRascunho(){
+      var linhas = [];
+      rowsContainer.querySelectorAll('.ingred-row').forEach(function(row){
+        var nomeEl = row.querySelector('[data-fing-field="nome"]');
+        var extra = !(nomeEl.tagName==='INPUT' && nomeEl.type==='hidden');
+        var brutoEl = row.querySelector('[data-fing-field="quantidadeBruta"]');
+        linhas.push({
+          nome: nomeEl.value,
+          quantidade: row.querySelector('[data-fing-field="quantidade"]').value,
+          unidade: row.querySelector('[data-fing-field="unidade"]').value,
+          quantidadeBruta: brutoEl ? brutoEl.value : '',
+          extra: extra
+        });
+      });
+      return linhas;
+    }
+
+    function salvarRascunho(){
+      if(!receitaAtual) return;
+      try{
+        var draft = {
+          linhas: coletarLinhasParaRascunho(),
+          data: document.getElementById('rend-data').value,
+          total: document.getElementById('rend-total').value,
+          savedAt: new Date().toISOString()
+        };
+        localStorage.setItem('cg_rend_draft_' + receitaAtual.id, JSON.stringify(draft));
+      }catch(e){}
+    }
+
+    function carregarRascunho(receitaId){
+      try{
+        var raw = localStorage.getItem('cg_rend_draft_' + receitaId);
+        return raw ? JSON.parse(raw) : null;
+      }catch(e){ return null; }
+    }
+
+    function limparRascunho(receitaId){
+      try{ localStorage.removeItem('cg_rend_draft_' + receitaId); }catch(e){}
+    }
+
+    function tempoDecorrido(isoStr){
+      var diffMin = Math.round((Date.now() - new Date(isoStr).getTime()) / 60000);
+      if(diffMin<1) return 'agora mesmo';
+      if(diffMin<60) return 'há ' + diffMin + ' min';
+      var diffH = Math.round(diffMin/60);
+      if(diffH<24) return 'há ' + diffH + 'h';
+      return 'há ' + Math.round(diffH/24) + ' dia(s)';
+    }
 
     function atualizarCustoLote(){
       var ingredientes = readFichaIngredRows(rowsContainer);
@@ -2801,9 +2878,10 @@
         var row = ev.target.closest('.ingred-row');
         if(row) row.remove();
         atualizarCustoLote();
+        salvarRascunho();
       }
     });
-    rowsContainer.addEventListener('input', atualizarCustoLote);
+    rowsContainer.addEventListener('input', function(){ atualizarCustoLote(); salvarRascunho(); });
     rowsContainer.addEventListener('change', function(ev){
       if(ev.target.matches('[data-fing-field="nome"]') && ev.target.tagName==='SELECT'){
         var info = buscarPrecoInsumo(ev.target.value);
@@ -2814,11 +2892,13 @@
         }
         atualizarCustoLote();
       }
+      salvarRascunho();
     });
     addBtn.onclick = function(){
       var div = document.createElement('div');
       div.innerHTML = insumoExtraRowHtml();
       rowsContainer.appendChild(div.firstElementChild);
+      salvarRascunho();
     };
 
     var historicoTituloEl = document.getElementById('rend-historico-titulo');
@@ -2829,8 +2909,32 @@
         historicoEl.innerHTML = '<div class="empty">Escolha uma receita acima para ver o histórico dela.</div>';
         return;
       }
-      historicoTituloEl.textContent = 'Histórico de rendimentos — ' + receita.titulo;
+      historicoTituloEl.innerHTML = '';
+      var tituloEl = document.createElement('span');
+      tituloEl.textContent = 'Histórico de rendimentos — ' + receita.titulo;
+      historicoTituloEl.appendChild(tituloEl);
       var lista = (receita.producoes || []).slice().sort(function(a,b){ return b.data.localeCompare(a.data); });
+      if(user.role==='dono' && lista.length>0){
+        var apagarTudoBtn = document.createElement('button');
+        apagarTudoBtn.className = 'btn';
+        apagarTudoBtn.style.cssText = 'margin-left:10px; padding:4px 10px; font-size:11.5px; border-color:var(--warn-txt); color:var(--warn-txt);';
+        apagarTudoBtn.textContent = 'Apagar todo o histórico desta receita';
+        apagarTudoBtn.onclick = async function(){
+          if(!(await showConfirm('Apagar TODOS os ' + lista.length + ' registro(s) de rendimento de "' + receita.titulo + '"? Essa ação não pode ser desfeita.', 'Apagar tudo'))) return;
+          var all = await getConteudo();
+          var idx = all.findIndex(function(x){ return x.id===receita.id; });
+          if(idx>-1){
+            all[idx].producoes = [];
+            var saved = await setData('conteudo', all);
+            if(saved){
+              logAudit(receita.marca==='todas' ? 'Ambas as unidades' : receita.marca, 'Apagou todo o histórico de rendimento', receita.titulo);
+              showToast('Histórico apagado.');
+              renderHistoricoDaReceita(all[idx]);
+            }
+          }
+        };
+        historicoTituloEl.appendChild(apagarTudoBtn);
+      }
       if(lista.length===0){
         historicoEl.innerHTML = '<div class="empty">Nenhum rendimento registrado ainda para essa receita.</div>';
         return;
@@ -2851,7 +2955,12 @@
       historicoEl.querySelectorAll('[data-hist-id]').forEach(function(row){
         row.onclick = function(){
           var p = lista.find(function(x){ return x.id===row.getAttribute('data-hist-id'); });
-          if(p) abrirDetalheRendimento(p, receita.titulo, receita.marca);
+          if(p) abrirDetalheRendimento(p, receita.titulo, receita.marca, receita.id, function(){
+            getConteudo().then(function(all2){
+              var r2 = all2.find(function(x){ return x.id===receita.id; });
+              renderHistoricoDaReceita(r2);
+            });
+          });
         };
       });
     }
@@ -2868,6 +2977,7 @@
         indiceEl.textContent = '';
         escalaBox.style.display = 'none';
         preparoBox.style.display = 'none';
+        document.getElementById('rend-rascunho-aviso').style.display = 'none';
         renderHistoricoDaReceita(null);
         return;
       }
@@ -2892,11 +3002,31 @@
         rowsContainer.innerHTML = ings.map(function(ing){ return rendRowTravadaHtml(ing.nome, ing.quantidade, ing.unidade, ing.quantidadeBruta); }).join('');
       }
       montarBlocoEscala(receita);
+
+      var rascunhoAvisoEl = document.getElementById('rend-rascunho-aviso');
+      var rascunho = carregarRascunho(itemId);
+      if(rascunho){
+        rowsContainer.innerHTML = rascunho.linhas.map(function(l){
+          return l.extra ? insumoExtraRowHtml(l.nome, l.quantidade, l.unidade) : rendRowTravadaHtml(l.nome, l.quantidade, l.unidade, l.quantidadeBruta);
+        }).join('');
+        if(rascunho.data) document.getElementById('rend-data').value = rascunho.data;
+        if(rascunho.total) document.getElementById('rend-total').value = rascunho.total;
+        rascunhoAvisoEl.style.display = 'block';
+        rascunhoAvisoEl.innerHTML = '<i class="ti ti-clock" aria-hidden="true"></i> Rascunho recuperado — salvo ' + tempoDecorrido(rascunho.savedAt) + '. <button type="button" class="btn" id="rend-descartar-rascunho" style="padding:3px 9px; font-size:11px; margin-left:6px;">Descartar e usar ficha original</button>';
+        document.getElementById('rend-descartar-rascunho').onclick = function(){
+          limparRascunho(itemId);
+          document.getElementById('rend-item').dispatchEvent(new Event('change'));
+        };
+      } else {
+        rascunhoAvisoEl.style.display = 'none';
+      }
+
       atualizarCustoLote();
       renderHistoricoDaReceita(receita);
     });
 
-    document.getElementById('rend-total').addEventListener('input', atualizarCustoLote);
+    document.getElementById('rend-total').addEventListener('input', function(){ atualizarCustoLote(); salvarRascunho(); });
+    document.getElementById('rend-data').addEventListener('input', salvarRascunho);
 
     if(window.__rendPreSelectId){
       var itemSelect = document.getElementById('rend-item');
@@ -2922,6 +3052,7 @@
         logAudit(all[idx].marca==='todas' ? 'Ambas as unidades' : all[idx].marca, 'Registrou rendimento', all[idx].titulo + ' · ' + total);
         var listaIngMsg = ingredientes.map(function(ing){ return (ing.quantidade||'') + (ing.unidade||'') + ' de ' + ing.nome; }).join(', ');
         window.__rendLastMsg = 'Produção registrada: ' + all[idx].titulo + '\nData: ' + data + '\nRendimento obtido: ' + total + '\nInsumos utilizados: ' + (listaIngMsg||'—') + '\nRegistrado por: ' + (user.nome || labelRole(user.role));
+        limparRascunho(itemId);
       }
       renderRendimentoTab(main);
     };
