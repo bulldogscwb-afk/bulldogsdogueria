@@ -772,14 +772,26 @@
   }
 
   // ============ DASHBOARD ============
+  function mondayISO(){
+    var d = new Date();
+    var day = d.getDay();
+    var diff = (day===0 ? 6 : day-1);
+    d.setDate(d.getDate()-diff);
+    return d.toISOString().slice(0,10);
+  }
+
   async function renderDashboard(main){
     var dLoaded = await Promise.all([
       getData('motoboys-entries', []),
       getData('rates-unidade1', DEFAULT_RATES),
-      getData('rates-unidade2', DEFAULT_RATES)
+      getData('rates-unidade2', DEFAULT_RATES),
+      getData('recebimentos-anexos', []),
+      getConteudo()
     ]);
     var entries = dLoaded[0];
     var rates = {unidade1: dLoaded[1], unidade2: dLoaded[2]};
+    var recebimentos = dLoaded[3];
+    var conteudoItems = dLoaded[4];
 
     function unitTotals(unitId){
       var list = entries.filter(function(e){ return e.unit===unitId; });
@@ -796,7 +808,38 @@
     var t2 = unitTotals('unidade2');
     var maxPago = Math.max(t1.totalPago, t2.totalPago, 1);
 
+    var pendRcU1 = recebimentos.filter(function(r){ return r.unit==='unidade1' && r.status!=='lancado'; }).length;
+    var pendRcU2 = recebimentos.filter(function(r){ return r.unit==='unidade2' && r.status!=='lancado'; }).length;
+
+    var hoje = todayISO();
+    var segunda = mondayISO();
+    var rendHojeU1=0, rendHojeU2=0, rendSemanaU1=0, rendSemanaU2=0;
+    conteudoItems.forEach(function(it){
+      if(it.tipo!=='receita') return;
+      (it.producoes||[]).forEach(function(p){
+        if(!p.unit) return;
+        if(p.data===hoje){ if(p.unit==='unidade1') rendHojeU1++; else if(p.unit==='unidade2') rendHojeU2++; }
+        if(p.data>=segunda){ if(p.unit==='unidade1') rendSemanaU1++; else if(p.unit==='unidade2') rendSemanaU2++; }
+      });
+    });
+
     var html = pageHead('Visão geral', user.role==='dono' ? 'Comparativo entre as duas unidades' : 'Sua unidade, com comparativo somente leitura');
+
+    html += '<div class="card" style="margin-bottom:16px;">';
+    html += '<div style="font-weight:600; font-size:14px; margin-bottom:12px;">Atalhos</div>';
+    html += '<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px,1fr)); gap:12px;">';
+    function atalhoTile(key, label, valor){
+      return '<button type="button" class="btn" data-atalho="' + key + '" style="text-align:left; padding:14px; display:flex; flex-direction:column; gap:4px; height:auto; align-items:flex-start;">' +
+        '<span style="font-size:11.5px; color:var(--muted);">' + label + '</span>' +
+        '<span style="font-size:22px; font-weight:700;" class="mono">' + valor + '</span>' +
+      '</button>';
+    }
+    html += atalhoTile('recebimentos-unidade1', 'Recebimentos pendentes · Unidade 1', pendRcU1);
+    html += atalhoTile('recebimentos-unidade2', 'Recebimentos pendentes · Unidade 2', pendRcU2);
+    html += atalhoTile('rendimento-unidade1', 'Rendimento · Unidade 1 (hoje / semana)', rendHojeU1 + ' / ' + rendSemanaU1);
+    html += atalhoTile('rendimento-unidade2', 'Rendimento · Unidade 2 (hoje / semana)', rendHojeU2 + ' / ' + rendSemanaU2);
+    html += '</div>';
+    html += '</div>';
 
     html += '<div class="grid-4">';
     html += statCard('Lançamentos · Unidade 1', t1.count, false);
@@ -814,6 +857,16 @@
     html += '</div>';
 
     main.innerHTML = html;
+
+    main.querySelectorAll('[data-atalho]').forEach(function(btn){
+      btn.onclick = function(){
+        var key = btn.getAttribute('data-atalho');
+        if(key==='recebimentos-unidade1'){ window.__rcUnit='unidade1'; currentPage='recebimentos'; renderApp(); }
+        else if(key==='recebimentos-unidade2'){ window.__rcUnit='unidade2'; currentPage='recebimentos'; renderApp(); }
+        else if(key==='rendimento-unidade1'){ window.__rendUnit='unidade1'; window.__ctTab='rendimento'; currentPage='conteudo'; renderApp(); }
+        else if(key==='rendimento-unidade2'){ window.__rendUnit='unidade2'; window.__ctTab='rendimento'; currentPage='conteudo'; renderApp(); }
+      };
+    });
   }
 
   function statCard(label, value, isMoney){
@@ -1895,6 +1948,7 @@
     html += '<img src="' + r.foto + '" data-rc-view="' + r.id + '" style="width:90px; height:90px; object-fit:cover; border-radius:8px; cursor:pointer; border:1px solid var(--line); flex-shrink:0;">';
     html += '<div style="flex:1; min-width:180px;">';
     html += '<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:4px;"><span style="font-weight:600; font-size:13.5px;">' + fmtDateBR(r.data) + '</span>' + statusBadge + '</div>';
+    if(r.observacao){ html += '<div style="font-size:12.5px; color:var(--ink-2); margin-bottom:4px;"><i class="ti ti-note" aria-hidden="true"></i> ' + escapeHtml(r.observacao) + '</div>'; }
     html += '<div style="font-size:11.5px; color:var(--muted);">' + sub + '</div>';
     html += '</div>';
     html += '<div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">';
@@ -1939,6 +1993,7 @@
     html += '<div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">';
     html += '<div class="form-field" style="margin:0;"><label for="rc-data">Data do recebimento</label><input type="date" id="rc-data" value="' + todayISO() + '"></div>';
     html += '<div class="form-field" style="margin:0; max-width:260px;"><label for="rc-foto">Foto da nota</label><input type="file" id="rc-foto" accept="image/*" capture="environment"></div>';
+    html += '<div class="form-field" style="margin:0; flex:1; min-width:220px;"><label for="rc-obs">Observação (fornecedor, "ok", "divergência"…)</label><input class="grid-input wide" style="width:100%;" type="text" id="rc-obs" placeholder="Opcional"></div>';
     html += '<button class="btn primary" id="rc-enviar" style="height:38px;">Enviar foto</button>';
     html += '</div>';
     html += '<div id="rc-preview" style="margin-top:10px;"></div>';
@@ -1986,11 +2041,13 @@
     document.getElementById('rc-enviar').onclick = async function(){
       if(!pendingFoto){ showToast('Escolha uma foto antes de enviar.', 'error'); return; }
       var dataVal = document.getElementById('rc-data').value || todayISO();
+      var obsVal = document.getElementById('rc-obs').value.trim();
       var novo = {
         id: 'rc_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
         unit: viewUnit,
         data: dataVal,
         foto: pendingFoto,
+        observacao: obsVal,
         enviadoPor: user.nome || labelRole(user.role),
         enviadoEm: new Date().toISOString(),
         status: 'pendente',
@@ -2001,7 +2058,7 @@
       allNow.push(novo);
       var saved = await setData('recebimentos-anexos', allNow);
       if(!saved) return;
-      logAudit(viewUnit, 'Enviou foto de recebimento', dataVal);
+      logAudit(viewUnit, 'Enviou foto de recebimento', dataVal + (obsVal ? ' · ' + obsVal : ''));
       showToast('Foto enviada!', 'success');
       renderRecebimentos(main);
     };
@@ -3189,7 +3246,21 @@
     __insumoPrecos = await getData('insumos-precos', {});
     var receitas = items.filter(function(it){ return it.tipo==='receita'; });
 
-    var html = '<div class="card" style="margin-bottom:20px;">';
+    var canPickUnit = user.role==='dono';
+    var viewUnit = canPickUnit ? (window.__rendUnit || 'unidade1') : user.unit;
+    window.__rendUnit = viewUnit;
+
+    var html = '';
+    if(canPickUnit){
+      html += '<div class="unit-toggle" style="margin-bottom:14px; width:fit-content;">';
+      UNITS.forEach(function(u){
+        html += '<button data-unit="' + u.id + '" class="' + (viewUnit===u.id?'active':'') + '">' + u.label + '</button>';
+      });
+      html += '</div>';
+    } else {
+      html += '<div style="font-size:12px; color:var(--muted); margin-bottom:12px;">Registrando para: <strong>' + labelUnit(viewUnit) + '</strong></div>';
+    }
+    html += '<div class="card" style="margin-bottom:20px;">';
     html += '<div style="font-size:14px; font-weight:600; margin-bottom:14px;">Registrar rendimento de uma produção</div>';
     html += '<div class="form-field"><label>Qual item você fez?</label><select id="rend-item">';
     html += '<option value="">Selecionar receita…</option>';
@@ -3226,6 +3297,12 @@
     html += '</div>';
 
     main.innerHTML = html;
+
+    if(canPickUnit){
+      main.querySelectorAll('.unit-toggle button[data-unit]').forEach(function(b){
+        b.onclick = function(){ window.__rendUnit = b.getAttribute('data-unit'); renderRendimentoTab(main); };
+      });
+    }
 
     var rowsContainer = document.getElementById('rend-ing-rows');
     var addBtn = document.getElementById('rend-ing-add');
@@ -3432,14 +3509,14 @@
         historicoEl.innerHTML = '<div class="empty">Nenhum rendimento registrado ainda para essa receita.</div>';
         return;
       }
-      var h = '<div class="table-scroll"><table><thead><tr><th>Data</th><th>Insumos usados</th><th>Rendimento total</th><th>Registrado por</th></tr></thead><tbody>';
+      var h = '<div class="table-scroll"><table><thead><tr><th>Data</th><th>Unidade</th><th>Insumos usados</th><th>Rendimento total</th><th>Registrado por</th></tr></thead><tbody>';
       lista.slice(0,30).forEach(function(p){
         var listaIng = (p.ingredientes||[]).map(function(ing){
           var base = (ing.quantidade||'') + (ing.unidade||'') + ' ' + ing.nome;
           if(ing.quantidadeBruta){ base += ' (bruto: ' + ing.quantidadeBruta + (ing.unidade||'') + ')'; }
           return base;
         }).join(', ');
-        h += '<tr data-hist-id="' + p.id + '" style="cursor:pointer;"><td class="num-cell">' + p.data + '</td><td style="color:var(--muted);">' + escapeHtml(listaIng||'—') + '</td>' +
+        h += '<tr data-hist-id="' + p.id + '" style="cursor:pointer;"><td class="num-cell">' + p.data + '</td><td>' + (p.unit ? labelUnit(p.unit) : '—') + '</td><td style="color:var(--muted);">' + escapeHtml(listaIng||'—') + '</td>' +
           '<td class="num-cell" style="font-weight:600;">' + escapeHtml(p.rendimentoTotal||'') + '</td><td>' + escapeHtml(p.responsavel) + '</td></tr>';
       });
       h += '</tbody></table></div>';
@@ -3539,7 +3616,7 @@
       var idx = all.findIndex(function(x){ return x.id===itemId; });
       if(idx===-1) return;
       all[idx].producoes = all[idx].producoes || [];
-      all[idx].producoes.push({id:'p'+Date.now(), data:data, ingredientes:ingredientes, rendimentoTotal:total, responsavel:user.nome || labelRole(user.role)});
+      all[idx].producoes.push({id:'p'+Date.now(), data:data, unit:viewUnit, ingredientes:ingredientes, rendimentoTotal:total, responsavel:user.nome || labelRole(user.role)});
       var saved = await setData('conteudo', all);
       if(saved){
         logAudit(all[idx].marca==='todas' ? 'Ambas as unidades' : all[idx].marca, 'Registrou rendimento', all[idx].titulo + ' · ' + total);
