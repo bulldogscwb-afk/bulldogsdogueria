@@ -301,6 +301,7 @@
     {id:'motoboys', label:'Motoboys', icon:'ti-motorbike', roles:['dono','gerente','supervisor','caixa']},
     {id:'fechamento', label:'Fechamento de caixa', icon:'ti-cash', roles:['dono','gerente','caixa']},
     {id:'bebidas', label:'Estoque · Bebidas', icon:'ti-fridge', roles:['dono','gerente','supervisor','equipe','caixa']},
+    {id:'recebimentos', label:'Recebimentos', icon:'ti-camera', roles:['dono','gerente','supervisor','equipe']},
     {id:'documentos', label:'Documentos', icon:'ti-folder', roles:['dono','gerente']},
     {id:'conteudo', label:'Receitas & Processos', icon:'ti-book-2', roles:['dono','gerente','supervisor','equipe','caixa']},
     {id:'regra-tres', label:'Regra de três', icon:'ti-calculator', roles:['dono','gerente','supervisor','equipe','caixa']},
@@ -758,6 +759,7 @@
     else if(currentPage === 'motoboys') await renderMotoboys(main);
     else if(currentPage === 'fechamento') await renderFechamento(main);
     else if(currentPage === 'bebidas') await renderBebidas(main);
+    else if(currentPage === 'recebimentos') await renderRecebimentos(main);
     else if(currentPage === 'documentos') await renderDocumentos(main);
     else if(currentPage === 'conteudo') await renderConteudo(main);
     else if(currentPage === 'regra-tres') await renderRegraTres(main);
@@ -1880,6 +1882,180 @@
         };
       });
     }
+  }
+
+  // ============ RECEBIMENTOS (fotos de notas para lançamento no estoque) ============
+  function recebimentoCardHtml(r, podeLancar, podeRemover){
+    var statusBadge = r.status==='lancado'
+      ? '<span class="lock-badge" style="background:var(--ok-bg); color:var(--ok-txt);"><i class="ti ti-check" aria-hidden="true"></i> Lançado</span>'
+      : '<span class="lock-badge" style="background:var(--warn-bg); color:var(--warn-txt);">Pendente</span>';
+    var sub = 'Enviado por ' + escapeHtml(r.enviadoPor||'—') + ' · ' + fmtDateTime(r.enviadoEm);
+    if(r.status==='lancado'){ sub += '<br>Lançado por ' + escapeHtml(r.lancadoPor||'—') + ' · ' + fmtDateTime(r.lancadoEm); }
+    var html = '<div class="card" style="display:flex; gap:14px; align-items:flex-start; flex-wrap:wrap;">';
+    html += '<img src="' + r.foto + '" data-rc-view="' + r.id + '" style="width:90px; height:90px; object-fit:cover; border-radius:8px; cursor:pointer; border:1px solid var(--line); flex-shrink:0;">';
+    html += '<div style="flex:1; min-width:180px;">';
+    html += '<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:4px;"><span style="font-weight:600; font-size:13.5px;">' + fmtDateBR(r.data) + '</span>' + statusBadge + '</div>';
+    html += '<div style="font-size:11.5px; color:var(--muted);">' + sub + '</div>';
+    html += '</div>';
+    html += '<div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">';
+    if(podeLancar){ html += '<button class="btn primary" data-rc-lancar="' + r.id + '" style="padding:6px 10px; font-size:12.5px;">Marcar como lançado</button>'; }
+    if(podeRemover){ html += '<button class="btn" data-rc-remover="' + r.id + '" style="padding:6px 10px; font-size:12.5px;">Remover</button>'; }
+    html += '</div>';
+    html += '</div>';
+    return html;
+  }
+
+  function fmtDateBR(iso){
+    if(!iso) return '—';
+    var p = iso.split('-');
+    return p.length===3 ? (p[2] + '/' + p[1] + '/' + p[0]) : iso;
+  }
+
+  async function renderRecebimentos(main){
+    var canPickUnit = user.role==='dono';
+    var viewUnit = canPickUnit ? (window.__rcUnit || 'unidade1') : user.unit;
+    window.__rcUnit = viewUnit;
+    var admin = isAdmin();
+
+    var all = await getData('recebimentos-anexos', []);
+    var itensUnit = all.filter(function(r){ return r.unit===viewUnit; });
+    var pendentes = itensUnit.filter(function(r){ return r.status!=='lancado'; })
+      .sort(function(a,b){ return (b.data+b.enviadoEm).localeCompare(a.data+a.enviadoEm); });
+    var lancados = itensUnit.filter(function(r){ return r.status==='lancado'; })
+      .sort(function(a,b){ return (b.data+b.enviadoEm).localeCompare(a.data+a.enviadoEm); });
+
+    var html = pageHead('Recebimentos', 'Fotos de notas/recebimentos para lançar no estoque depois');
+
+    if(canPickUnit){
+      html += '<div class="unit-toggle" style="margin-bottom:14px; width:fit-content;">';
+      UNITS.forEach(function(u){
+        html += '<button data-unit="' + u.id + '" class="' + (viewUnit===u.id?'active':'') + '">' + u.label + '</button>';
+      });
+      html += '</div>';
+    }
+
+    html += '<div class="card" style="margin-bottom:20px;">';
+    html += '<div style="font-weight:600; font-size:14px; margin-bottom:12px;">Enviar nova foto</div>';
+    html += '<div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">';
+    html += '<div class="form-field" style="margin:0;"><label for="rc-data">Data do recebimento</label><input type="date" id="rc-data" value="' + todayISO() + '"></div>';
+    html += '<div class="form-field" style="margin:0; max-width:260px;"><label for="rc-foto">Foto da nota</label><input type="file" id="rc-foto" accept="image/*" capture="environment"></div>';
+    html += '<button class="btn primary" id="rc-enviar" style="height:38px;">Enviar foto</button>';
+    html += '</div>';
+    html += '<div id="rc-preview" style="margin-top:10px;"></div>';
+    html += '</div>';
+
+    html += '<div style="font-weight:600; font-size:14px; margin-bottom:10px;">Pendentes de lançamento (' + pendentes.length + ')</div>';
+    if(pendentes.length===0){
+      html += '<div class="empty" style="margin-bottom:20px;">Nenhuma foto pendente nesta unidade.</div>';
+    } else {
+      html += '<div style="display:flex; flex-direction:column; gap:10px; margin-bottom:20px;">';
+      pendentes.forEach(function(r){
+        html += recebimentoCardHtml(r, admin, admin);
+      });
+      html += '</div>';
+    }
+
+    html += '<button class="btn" id="rc-toggle-hist" style="margin-bottom:12px;">Ver histórico de lançados (' + lancados.length + ')</button>';
+    html += '<div id="rc-hist" style="display:none; flex-direction:column; gap:10px;">';
+    lancados.forEach(function(r){
+      html += recebimentoCardHtml(r, false, admin);
+    });
+    html += '</div>';
+
+    main.innerHTML = html;
+
+    if(canPickUnit){
+      main.querySelectorAll('.unit-toggle button[data-unit]').forEach(function(b){
+        b.onclick = function(){ window.__rcUnit = b.getAttribute('data-unit'); renderRecebimentos(main); };
+      });
+    }
+
+    var pendingFoto = '';
+    var fotoInput = document.getElementById('rc-foto');
+    fotoInput.addEventListener('change', async function(){
+      var file = fotoInput.files[0];
+      if(!file) return;
+      try{
+        pendingFoto = await resizeImageFile(file, 1400);
+        document.getElementById('rc-preview').innerHTML = '<img src="' + pendingFoto + '" style="max-width:200px; border-radius:8px;">';
+      }catch(err){
+        showToast('Não consegui processar essa foto.', 'error');
+      }
+    });
+
+    document.getElementById('rc-enviar').onclick = async function(){
+      if(!pendingFoto){ showToast('Escolha uma foto antes de enviar.', 'error'); return; }
+      var dataVal = document.getElementById('rc-data').value || todayISO();
+      var novo = {
+        id: 'rc_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
+        unit: viewUnit,
+        data: dataVal,
+        foto: pendingFoto,
+        enviadoPor: user.nome || labelRole(user.role),
+        enviadoEm: new Date().toISOString(),
+        status: 'pendente',
+        lancadoPor: null,
+        lancadoEm: null
+      };
+      var allNow = await getData('recebimentos-anexos', []);
+      allNow.push(novo);
+      var saved = await setData('recebimentos-anexos', allNow);
+      if(!saved) return;
+      logAudit(viewUnit, 'Enviou foto de recebimento', dataVal);
+      showToast('Foto enviada!', 'success');
+      renderRecebimentos(main);
+    };
+
+    var histToggle = document.getElementById('rc-toggle-hist');
+    var histDiv = document.getElementById('rc-hist');
+    var histAberto = false;
+    histToggle.onclick = function(){
+      histAberto = !histAberto;
+      histDiv.style.display = histAberto ? 'flex' : 'none';
+      histToggle.textContent = (histAberto ? 'Esconder' : 'Ver') + ' histórico de lançados (' + lancados.length + ')';
+    };
+
+    main.querySelectorAll('[data-rc-view]').forEach(function(img){
+      img.onclick = function(){
+        var id = img.getAttribute('data-rc-view');
+        var item = itensUnit.find(function(x){ return x.id===id; });
+        if(!item) return;
+        var overlay = document.createElement('div');
+        overlay.className = 'form-modal-overlay';
+        overlay.innerHTML = '<div class="form-modal-box" style="max-width:600px; text-align:center;"><img src="' + item.foto + '" style="max-width:100%; border-radius:10px;"><div style="margin-top:14px;"><button class="btn" id="rc-close-lightbox">Fechar</button></div></div>';
+        document.body.appendChild(overlay);
+        document.getElementById('rc-close-lightbox').onclick = function(){ overlay.remove(); };
+        overlay.onclick = function(ev){ if(ev.target===overlay) overlay.remove(); };
+      };
+    });
+
+    main.querySelectorAll('[data-rc-lancar]').forEach(function(btn){
+      btn.onclick = async function(){
+        var id = btn.getAttribute('data-rc-lancar');
+        var allNow = await getData('recebimentos-anexos', []);
+        var item = allNow.find(function(x){ return x.id===id; });
+        if(!item) return;
+        item.status = 'lancado';
+        item.lancadoPor = user.nome || labelRole(user.role);
+        item.lancadoEm = new Date().toISOString();
+        var saved = await setData('recebimentos-anexos', allNow);
+        if(!saved) return;
+        logAudit(viewUnit, 'Marcou recebimento como lançado', item.data);
+        renderRecebimentos(main);
+      };
+    });
+
+    main.querySelectorAll('[data-rc-remover]').forEach(function(btn){
+      btn.onclick = async function(){
+        var id = btn.getAttribute('data-rc-remover');
+        if(!(await showConfirm('Remover esta foto de recebimento? Essa ação não pode ser desfeita.', 'Remover'))) return;
+        var allNow = await getData('recebimentos-anexos', []);
+        allNow = allNow.filter(function(x){ return x.id!==id; });
+        var saved = await setData('recebimentos-anexos', allNow);
+        if(!saved) return;
+        renderRecebimentos(main);
+      };
+    });
   }
 
   function formField(type,id,label,placeholder,val){
@@ -4439,7 +4615,7 @@
       'motoboys-turno-status','motoboys-turno-removidos','caixa-fechamento','caixa-fechamento-status','conteudo','nav-permissions','avaliacoes',
       'colaboradores-avaliacao','insumos-cadastro','insumos-nomes','insumos-precos','checklist-status','audit-log','users-list',
       'pedidos-folga','atestados-colaborador','sugestoes-ideias','sugestoes-compras','whatsapp-contatos','cargos-personalizados','producao-diaria',
-      'producao-diaria-fixas','producao-diaria-removidos','bebidas-cadastro','bebidas-fechamentos','bebidas-fechamento-status'];
+      'producao-diaria-fixas','producao-diaria-removidos','bebidas-cadastro','bebidas-fechamentos','bebidas-fechamento-status','recebimentos-anexos'];
 
     document.getElementById('limpar-rendimentos').onclick = async function(){
       var todosItens = await getConteudo();
