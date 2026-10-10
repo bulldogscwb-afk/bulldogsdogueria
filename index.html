@@ -276,6 +276,10 @@
   var SUPABASE_URL = 'https://tvhsuhtqkanaupelklwk.supabase.co';
   var SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR2aHN1aHRxa2FuYXVwZWxrbHdrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI4NzEzNDAsImV4cCI6MjA5ODQ0NzM0MH0.wn95mXhYlquto910_TNn7_Do5RQlr5MgCQmEpaumcxo';
   var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  // Nome do "bucket" (pasta) no Supabase Storage onde ficam as fotos de
+  // recebimentos. Esse bucket precisa existir no painel do Supabase antes
+  // de usar o envio de fotos (ver instruções enviadas ao dono do projeto).
+  var STORAGE_BUCKET_RECEBIMENTOS = 'recebimentos-fotos';
 
   // ============ CONEXÃO COM O GOOGLE DRIVE ============
   // Cole aqui o Client ID que você criar no Google Cloud Console.
@@ -365,6 +369,36 @@
   function weekdayLabel(id){ var w = WEEKDAYS.find(function(x){ return x.id===id; }); return w ? w.label : id; }
 
   var user = null; // {nome, unit, role}
+
+  // ============ SESSÃO (login dura um tempo, sem precisar digitar senha toda hora) ============
+  var SESSION_DURATION_MS = 12*60*60*1000; // 12 horas — renovado a cada vez que o app é aberto com sessão válida
+  function salvarSessao(u){
+    try{ localStorage.setItem('cg_session', JSON.stringify({user:u, expiresAt: Date.now() + SESSION_DURATION_MS})); }catch(e){}
+  }
+  function carregarSessaoValida(){
+    try{
+      var raw = localStorage.getItem('cg_session');
+      if(!raw) return null;
+      var s = JSON.parse(raw);
+      if(!s || !s.user || !s.expiresAt || Date.now() > s.expiresAt) return null;
+      return s.user;
+    }catch(e){ return null; }
+  }
+  function limparSessao(){
+    try{ localStorage.removeItem('cg_session'); }catch(e){}
+  }
+  async function tentarRestaurarSessao(){
+    var sessaoUser = carregarSessaoValida();
+    if(!sessaoUser || !sessaoUser.username) return false;
+    try{
+      var all = await getData('users-list', []);
+      var found = all.find(function(u){ return u.ativo!==false && u.username===sessaoUser.username; });
+      if(!found){ limparSessao(); return false; }
+      user = {nome:found.nome, username:found.username, role:found.role, unit:found.unit, cargoId:found.cargoId||null, cargoNome:found.cargoNome||null};
+      salvarSessao(user);
+      return true;
+    }catch(e){ return false; }
+  }
   var currentPage = 'dashboard';
 
   // ---------- storage helpers ----------
@@ -550,6 +584,7 @@
       if(!saved) return;
       user = {nome:nome, username:username, role:'dono', unit:null};
       try{ localStorage.setItem('cg_username', username); }catch(e){}
+      salvarSessao(user);
       renderCodigoRecuperacaoTela(card, codigo, function(){ enterApp(); });
     };
   }
@@ -595,6 +630,7 @@
       if(!found){ errEl.textContent = 'Usuário ou senha incorretos.'; return; }
       user = {nome:found.nome, username:found.username, role:found.role, unit:found.unit, cargoId:found.cargoId||null, cargoNome:found.cargoNome||null};
       try{ localStorage.setItem('cg_username', found.username); }catch(e){}
+      salvarSessao(user);
       enterApp();
     }
 
@@ -719,6 +755,7 @@
   document.getElementById('btn-switch').onclick = function(){
     user = null;
     try{ localStorage.removeItem('cg_username'); }catch(e){}
+    limparSessao();
     document.getElementById('view-app').style.display = 'none';
     document.getElementById('view-login').style.display = 'flex';
     renderLogin();
@@ -2042,11 +2079,27 @@
       if(!pendingFoto){ showToast('Escolha uma foto antes de enviar.', 'error'); return; }
       var dataVal = document.getElementById('rc-data').value || todayISO();
       var obsVal = document.getElementById('rc-obs').value.trim();
+      var novoId = 'rc_' + Date.now() + '_' + Math.random().toString(36).slice(2,7);
+      var botaoEnviar = document.getElementById('rc-enviar');
+      botaoEnviar.disabled = true;
+      botaoEnviar.textContent = 'Enviando...';
+
+      var fotoUrl;
+      try{
+        fotoUrl = await uploadFotoRecebimento(pendingFoto, viewUnit, novoId);
+      }catch(err){
+        console.error('erro ao enviar foto para o Storage', err);
+        showToast('Não consegui enviar a foto. Verifique sua conexão e tente de novo.', 'error');
+        botaoEnviar.disabled = false;
+        botaoEnviar.textContent = 'Enviar foto';
+        return;
+      }
+
       var novo = {
-        id: 'rc_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
+        id: novoId,
         unit: viewUnit,
         data: dataVal,
-        foto: pendingFoto,
+        foto: fotoUrl,
         observacao: obsVal,
         enviadoPor: user.nome || labelRole(user.role),
         enviadoEm: new Date().toISOString(),
@@ -2057,7 +2110,11 @@
       var allNow = await getData('recebimentos-anexos', []);
       allNow.push(novo);
       var saved = await setData('recebimentos-anexos', allNow);
-      if(!saved) return;
+      if(!saved){
+        botaoEnviar.disabled = false;
+        botaoEnviar.textContent = 'Enviar foto';
+        return;
+      }
       logAudit(viewUnit, 'Enviou foto de recebimento', dataVal + (obsVal ? ' · ' + obsVal : ''));
       showToast('Foto enviada!', 'success');
       renderRecebimentos(main);
@@ -2276,6 +2333,34 @@
       reader.onerror = function(){ reject(new Error('não consegui ler esse arquivo')); };
       reader.readAsDataURL(file);
     });
+  }
+
+  // Converte uma imagem "data URL" (texto base64) em um Blob (arquivo
+  // binário). O Supabase Storage precisa de um Blob para o upload.
+  function dataURLtoBlob(dataUrl){
+    var partes = dataUrl.split(',');
+    var mimeMatch = partes[0].match(/:(.*?);/);
+    var mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+    var binario = atob(partes[1]);
+    var tamanho = binario.length;
+    var bytes = new Uint8Array(tamanho);
+    for(var i=0; i<tamanho; i++){ bytes[i] = binario.charCodeAt(i); }
+    return new Blob([bytes], {type: mime});
+  }
+
+  // Envia uma foto (já comprimida pelo resizeImageFile) para o Supabase
+  // Storage. Guarda o arquivo fora do banco de dados principal.
+  // Retorna o link público da foto.
+  async function uploadFotoRecebimento(dataUrl, unit, id){
+    var blob = dataURLtoBlob(dataUrl);
+    var caminho = unit + '/' + id + '.jpg';
+    var res = await sb.storage.from(STORAGE_BUCKET_RECEBIMENTOS).upload(caminho, blob, {
+      contentType: 'image/jpeg',
+      upsert: true
+    });
+    if(res.error) throw res.error;
+    var pub = sb.storage.from(STORAGE_BUCKET_RECEBIMENTOS).getPublicUrl(caminho);
+    return pub.data.publicUrl;
   }
 
   async function getConteudo(){
@@ -5004,7 +5089,10 @@
     window.open(link, '_blank');
   });
 
-  renderLogin();
+  (async function(){
+    var restaurou = await tentarRestaurarSessao();
+    if(restaurou){ await enterApp(); } else { renderLogin(); }
+  })();
 
   if('serviceWorker' in navigator){
     window.addEventListener('load', function(){
