@@ -306,6 +306,7 @@
     {id:'fechamento', label:'Fechamento de caixa', icon:'ti-cash', roles:['dono','gerente','caixa']},
     {id:'bebidas', label:'Estoque · Bebidas', icon:'ti-fridge', roles:['dono','gerente','supervisor','equipe','caixa']},
     {id:'recebimentos', label:'Recebimentos', icon:'ti-camera', roles:['dono','gerente','supervisor','equipe']},
+    {id:'desperdicio', label:'Desperdício · Boqueirão', icon:'ti-trash', roles:['dono','gerente']},
     {id:'documentos', label:'Documentos', icon:'ti-folder', roles:['dono','gerente']},
     {id:'conteudo', label:'Receitas & Processos', icon:'ti-book-2', roles:['dono','gerente','supervisor','equipe','caixa']},
     {id:'regra-tres', label:'Regra de três', icon:'ti-calculator', roles:['dono','gerente','supervisor','equipe','caixa']},
@@ -797,6 +798,7 @@
     else if(currentPage === 'fechamento') await renderFechamento(main);
     else if(currentPage === 'bebidas') await renderBebidas(main);
     else if(currentPage === 'recebimentos') await renderRecebimentos(main);
+    else if(currentPage === 'desperdicio') await renderDesperdicio(main);
     else if(currentPage === 'documentos') await renderDocumentos(main);
     else if(currentPage === 'conteudo') await renderConteudo(main);
     else if(currentPage === 'regra-tres') await renderRegraTres(main);
@@ -823,12 +825,15 @@
       getData('rates-unidade1', DEFAULT_RATES),
       getData('rates-unidade2', DEFAULT_RATES),
       getData('recebimentos-anexos', []),
-      getConteudo()
+      getConteudo(),
+      getData('desperdicio-registros', [])
     ]);
     var entries = dLoaded[0];
     var rates = {unidade1: dLoaded[1], unidade2: dLoaded[2]};
     var recebimentos = dLoaded[3];
     var conteudoItems = dLoaded[4];
+    var desperdicios = dLoaded[5];
+    var pendDesp = desperdicios.filter(function(r){ return r.status!=='lancado'; }).length;
 
     function unitTotals(unitId){
       var list = entries.filter(function(e){ return e.unit===unitId; });
@@ -875,6 +880,7 @@
     html += atalhoTile('recebimentos-unidade2', 'Recebimentos pendentes · Unidade 2', pendRcU2);
     html += atalhoTile('rendimento-unidade1', 'Rendimento · Unidade 1 (hoje / semana)', rendHojeU1 + ' / ' + rendSemanaU1);
     html += atalhoTile('rendimento-unidade2', 'Rendimento · Unidade 2 (hoje / semana)', rendHojeU2 + ' / ' + rendSemanaU2);
+    html += atalhoTile('desperdicio', 'Desperdício pendente · Boqueirão', pendDesp);
     html += '</div>';
     html += '</div>';
 
@@ -902,6 +908,7 @@
         else if(key==='recebimentos-unidade2'){ window.__rcUnit='unidade2'; currentPage='recebimentos'; renderApp(); }
         else if(key==='rendimento-unidade1'){ window.__rendUnit='unidade1'; window.__ctTab='rendimento'; currentPage='conteudo'; renderApp(); }
         else if(key==='rendimento-unidade2'){ window.__rendUnit='unidade2'; window.__ctTab='rendimento'; currentPage='conteudo'; renderApp(); }
+        else if(key==='desperdicio'){ currentPage='desperdicio'; renderApp(); }
       };
     });
   }
@@ -2000,6 +2007,219 @@
     if(!iso) return '—';
     var p = iso.split('-');
     return p.length===3 ? (p[2] + '/' + p[1] + '/' + p[0]) : iso;
+  }
+
+  // ============ DESPERDÍCIO · BOQUEIRÃO ============
+  // O líder do Boqueirão registra aqui. O dono/gerente lança no Alô Chefia
+  // e marca como lançado. Só texto (sem foto), então o registro é leve.
+  var DESPERDICIO_MOTIVOS = ['Vencido / validade','Queda ou acidente','Erro de preparo','Sobra de produção','Pedido errado / devolução','Quebra ou avaria','Outro'];
+  var DESPERDICIO_MEDIDAS = ['un','kg','g','L','ml'];
+
+  function fmtQtd(q){ return String(q).replace('.', ','); }
+
+  function desperdicioRowHtml(r, podeLancar, podeRemover){
+    var h = '<tr>';
+    h += '<td class="num-cell">' + fmtDateBR(r.data) + '</td>';
+    h += '<td style="font-weight:600;">' + escapeHtml(r.item) + '</td>';
+    h += '<td class="num-cell">' + fmtQtd(r.quantidade) + ' ' + escapeHtml(r.medida||'') + '</td>';
+    h += '<td>' + escapeHtml(r.motivo||'—') + '</td>';
+    h += '<td style="color:var(--muted);">' + escapeHtml(r.observacao||'') + '</td>';
+    h += '<td style="font-size:12px; color:var(--muted);">' + escapeHtml(r.registradoPor||'—') + '<br>' + fmtDateTime(r.registradoEm);
+    if(r.status==='lancado'){ h += '<br>Lançado por ' + escapeHtml(r.lancadoPor||'—') + ' · ' + fmtDateTime(r.lancadoEm); }
+    h += '</td>';
+    h += '<td style="white-space:nowrap;">';
+    if(podeLancar){ h += '<button class="btn primary" data-dp-lancar="' + r.id + '" style="padding:5px 9px; font-size:12px;">Marcar como lançado</button> '; }
+    if(podeRemover){ h += '<button class="btn" data-dp-remover="' + r.id + '" style="padding:5px 9px; font-size:12px;">Remover</button>'; }
+    h += '</td></tr>';
+    return h;
+  }
+
+  async function renderDesperdicio(main){
+    var admin = isAdmin();
+    var all = await getData('desperdicio-registros', []);
+
+    var pendentes = all.filter(function(r){ return r.status!=='lancado'; })
+      .sort(function(a,b){ return (a.data+a.registradoEm).localeCompare(b.data+b.registradoEm); });
+    var lancadosTodos = all.filter(function(r){ return r.status==='lancado'; })
+      .sort(function(a,b){ return (b.data+b.registradoEm).localeCompare(a.data+a.registradoEm); });
+    var lancados = lancadosTodos.slice(0, 100);
+
+    // Sugestões de item (os já usados antes), sem repetir.
+    var vistos = {}, itensSug = [];
+    all.forEach(function(r){
+      var k = (r.item||'').trim().toLowerCase();
+      if(k && !vistos[k]){ vistos[k] = true; itensSug.push(r.item.trim()); }
+    });
+    itensSug.sort(function(a,b){ return a.localeCompare(b, 'pt-BR'); });
+
+    var dataDef = window.__dpData || todayISO();
+    var motivoDef = window.__dpMotivo || DESPERDICIO_MOTIVOS[0];
+    var medidaDef = window.__dpMedida || 'un';
+
+    var html = pageHead('Desperdício · Boqueirão', 'Registre o que foi desperdiçado. O lançamento no Alô Chefia é feito depois pela gerência.');
+
+    html += '<div class="card" style="margin-bottom:20px;">';
+    html += '<div style="font-weight:600; font-size:14px; margin-bottom:12px;">Registrar desperdício</div>';
+    html += '<div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">';
+    html += '<div class="form-field" style="margin:0; width:160px;"><label for="dp-data">Data</label><input type="date" id="dp-data" value="' + dataDef + '"></div>';
+    html += '<div class="form-field" style="margin:0; flex:1; min-width:200px;"><label for="dp-item">Item</label><input type="text" id="dp-item" list="dp-itens" autocomplete="off" placeholder="Ex.: pão brioche, carne, molho"></div>';
+    html += '<datalist id="dp-itens">';
+    itensSug.forEach(function(n){ html += '<option value="' + escapeHtml(n) + '"></option>'; });
+    html += '</datalist>';
+    html += '<div class="form-field" style="margin:0; width:100px;"><label for="dp-qtd">Quantidade</label><input type="text" inputmode="decimal" id="dp-qtd" placeholder="0"></div>';
+    html += '<div class="form-field" style="margin:0; width:85px;"><label for="dp-medida">Medida</label><select id="dp-medida">';
+    DESPERDICIO_MEDIDAS.forEach(function(m){ html += '<option value="' + m + '"' + (m===medidaDef?' selected':'') + '>' + m + '</option>'; });
+    html += '</select></div>';
+    html += '<div class="form-field" style="margin:0; width:210px;"><label for="dp-motivo">Motivo</label><select id="dp-motivo">';
+    DESPERDICIO_MOTIVOS.forEach(function(m){ html += '<option value="' + escapeHtml(m) + '"' + (m===motivoDef?' selected':'') + '>' + escapeHtml(m) + '</option>'; });
+    html += '</select></div>';
+    html += '<div class="form-field" style="margin:0; flex:1; min-width:200px;"><label for="dp-obs">Observação</label><input type="text" id="dp-obs" placeholder="Opcional"></div>';
+    html += '<button class="btn primary" id="dp-registrar" style="height:38px;">Registrar</button>';
+    html += '</div>';
+    html += '</div>';
+
+    html += '<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:10px;">';
+    html += '<div style="font-weight:600; font-size:14px;">Pendentes de lançamento (' + pendentes.length + ')</div>';
+    if(admin && pendentes.length>0){ html += '<button class="btn" id="dp-lancar-todos" style="padding:6px 10px; font-size:12.5px;">Marcar todos como lançados</button>'; }
+    html += '</div>';
+    if(pendentes.length===0){
+      html += '<div class="empty" style="margin-bottom:20px;">Nenhum desperdício pendente.</div>';
+    } else {
+      html += '<div class="table-scroll" style="margin-bottom:20px;"><table><thead><tr><th>Data</th><th>Item</th><th>Quantidade</th><th>Motivo</th><th>Observação</th><th>Registrado por</th><th></th></tr></thead><tbody>';
+      pendentes.forEach(function(r){
+        var ehAutor = !!r.registradoUsername && r.registradoUsername===user.username;
+        html += desperdicioRowHtml(r, admin, admin || ehAutor);
+      });
+      html += '</tbody></table></div>';
+    }
+
+    html += '<button class="btn" id="dp-toggle-hist" style="margin-bottom:12px;">Ver histórico de lançados (' + lancadosTodos.length + ')</button>';
+    html += '<div id="dp-hist" style="display:none;">';
+    if(lancados.length===0){
+      html += '<div class="empty">Nenhum desperdício lançado ainda.</div>';
+    } else {
+      html += '<div class="table-scroll"><table><thead><tr><th>Data</th><th>Item</th><th>Quantidade</th><th>Motivo</th><th>Observação</th><th>Registrado por</th><th></th></tr></thead><tbody>';
+      lancados.forEach(function(r){ html += desperdicioRowHtml(r, false, admin); });
+      html += '</tbody></table></div>';
+      if(lancadosTodos.length > lancados.length){
+        html += '<div style="font-size:12px; color:var(--muted); margin-top:8px;">Mostrando os 100 mais recentes.</div>';
+      }
+    }
+    html += '</div>';
+
+    main.innerHTML = html;
+
+    if(window.__dpFocus){
+      window.__dpFocus = false;
+      var itemEl = document.getElementById('dp-item');
+      if(itemEl) itemEl.focus();
+    }
+
+    async function registrar(){
+      var dataVal = document.getElementById('dp-data').value || todayISO();
+      var itemVal = document.getElementById('dp-item').value.trim();
+      var qtdVal = parseFloat(document.getElementById('dp-qtd').value.trim().replace(',', '.'));
+      var medidaVal = document.getElementById('dp-medida').value;
+      var motivoVal = document.getElementById('dp-motivo').value;
+      var obsVal = document.getElementById('dp-obs').value.trim();
+      if(!itemVal){ showToast('Informe o item desperdiçado.', 'error'); return; }
+      if(!(qtdVal > 0)){ showToast('Informe uma quantidade maior que zero.', 'error'); return; }
+      var btn = document.getElementById('dp-registrar');
+      btn.disabled = true;
+      var novo = {
+        id: 'dp_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
+        local: 'Boqueirão',
+        data: dataVal,
+        item: itemVal,
+        quantidade: qtdVal,
+        medida: medidaVal,
+        motivo: motivoVal,
+        observacao: obsVal,
+        registradoPor: user.nome || labelRole(user.role),
+        registradoUsername: user.username || '',
+        registradoEm: new Date().toISOString(),
+        status: 'pendente',
+        lancadoPor: null,
+        lancadoEm: null
+      };
+      var allNow = await getData('desperdicio-registros', []);
+      allNow.push(novo);
+      var saved = await setData('desperdicio-registros', allNow);
+      if(!saved){ btn.disabled = false; return; }
+      window.__dpData = dataVal;
+      window.__dpMotivo = motivoVal;
+      window.__dpMedida = medidaVal;
+      window.__dpFocus = true;
+      logAudit('Boqueirão', 'Registrou desperdício', itemVal + ' · ' + fmtQtd(qtdVal) + ' ' + medidaVal + ' · ' + motivoVal);
+      showToast('Desperdício registrado!', 'success');
+      renderDesperdicio(main);
+    }
+    document.getElementById('dp-registrar').onclick = registrar;
+    ['dp-qtd','dp-obs'].forEach(function(id){
+      document.getElementById(id).addEventListener('keydown', function(ev){
+        if(ev.key==='Enter'){ ev.preventDefault(); registrar(); }
+      });
+    });
+
+    var histToggle = document.getElementById('dp-toggle-hist');
+    var histDiv = document.getElementById('dp-hist');
+    var histAberto = false;
+    histToggle.onclick = function(){
+      histAberto = !histAberto;
+      histDiv.style.display = histAberto ? 'block' : 'none';
+      histToggle.textContent = (histAberto ? 'Esconder' : 'Ver') + ' histórico de lançados (' + lancadosTodos.length + ')';
+    };
+
+    main.querySelectorAll('[data-dp-lancar]').forEach(function(btn){
+      btn.onclick = async function(){
+        var id = btn.getAttribute('data-dp-lancar');
+        var allNow = await getData('desperdicio-registros', []);
+        var item = allNow.find(function(x){ return x.id===id; });
+        if(!item) return;
+        item.status = 'lancado';
+        item.lancadoPor = user.nome || labelRole(user.role);
+        item.lancadoEm = new Date().toISOString();
+        var saved = await setData('desperdicio-registros', allNow);
+        if(!saved) return;
+        logAudit('Boqueirão', 'Marcou desperdício como lançado', item.item + ' · ' + fmtDateBR(item.data));
+        renderDesperdicio(main);
+      };
+    });
+
+    var btnTodos = document.getElementById('dp-lancar-todos');
+    if(btnTodos){
+      btnTodos.onclick = async function(){
+        var ids = {};
+        pendentes.forEach(function(r){ ids[r.id] = true; });
+        if(!(await showConfirm('Marcar os ' + pendentes.length + ' itens pendentes como lançados no Alô Chefia?', 'Marcar todos'))) return;
+        var allNow = await getData('desperdicio-registros', []);
+        var agora = new Date().toISOString();
+        var nome = user.nome || labelRole(user.role);
+        var n = 0;
+        allNow.forEach(function(r){
+          if(ids[r.id] && r.status!=='lancado'){ r.status = 'lancado'; r.lancadoPor = nome; r.lancadoEm = agora; n++; }
+        });
+        var saved = await setData('desperdicio-registros', allNow);
+        if(!saved) return;
+        logAudit('Boqueirão', 'Marcou desperdícios como lançados', n + ' itens');
+        showToast(n + ' itens marcados como lançados.', 'success');
+        renderDesperdicio(main);
+      };
+    }
+
+    main.querySelectorAll('[data-dp-remover]').forEach(function(btn){
+      btn.onclick = async function(){
+        var id = btn.getAttribute('data-dp-remover');
+        if(!(await showConfirm('Remover este registro de desperdício? Essa ação não pode ser desfeita.', 'Remover'))) return;
+        var allNow = await getData('desperdicio-registros', []);
+        var alvo = allNow.find(function(x){ return x.id===id; });
+        allNow = allNow.filter(function(x){ return x.id!==id; });
+        var saved = await setData('desperdicio-registros', allNow);
+        if(!saved) return;
+        if(alvo){ logAudit('Boqueirão', 'Removeu registro de desperdício', alvo.item + ' · ' + fmtDateBR(alvo.data)); }
+        renderDesperdicio(main);
+      };
+    });
   }
 
   async function renderRecebimentos(main){
@@ -4777,7 +4997,7 @@
       'motoboys-turno-status','motoboys-turno-removidos','caixa-fechamento','caixa-fechamento-status','conteudo','nav-permissions','avaliacoes',
       'colaboradores-avaliacao','insumos-cadastro','insumos-nomes','insumos-precos','checklist-status','audit-log','users-list',
       'pedidos-folga','atestados-colaborador','sugestoes-ideias','sugestoes-compras','whatsapp-contatos','cargos-personalizados','producao-diaria',
-      'producao-diaria-fixas','producao-diaria-removidos','bebidas-cadastro','bebidas-fechamentos','bebidas-fechamento-status','recebimentos-anexos'];
+      'producao-diaria-fixas','producao-diaria-removidos','bebidas-cadastro','bebidas-fechamentos','bebidas-fechamento-status','recebimentos-anexos','desperdicio-registros'];
 
     document.getElementById('limpar-rendimentos').onclick = async function(){
       var todosItens = await getConteudo();
