@@ -307,7 +307,7 @@
     // {id:'bebidas', label:'Estoque · Bebidas', icon:'ti-fridge', roles:['dono','gerente','supervisor','equipe','caixa']}, // desativado a pedido (26/10/2026) — os dados continuam salvos; reative removendo o comentário
     {id:'recebimentos', label:'Recebimentos', icon:'ti-camera', roles:['dono','gerente','supervisor','equipe']},
     {id:'desperdicio', label:'Desperdício', icon:'ti-trash', roles:['dono','gerente']},
-    {id:'colab-fichas', label:'Fichas · Colaboradores', icon:'ti-id-badge', roles:['dono','gerente']},
+    {id:'colab-fichas', label:'Documentos · Colaboradores', icon:'ti-id-badge', roles:['dono','gerente']},
     {id:'documentos', label:'Documentos', icon:'ti-folder', roles:['dono','gerente']},
     {id:'conteudo', label:'Receitas & Processos', icon:'ti-book-2', roles:['dono','gerente','supervisor','equipe','caixa']},
     {id:'regra-tres', label:'Regra de três', icon:'ti-calculator', roles:['dono','gerente','supervisor','equipe','caixa']},
@@ -2302,8 +2302,8 @@
     });
   }
 
-  // ============ FICHAS DE COLABORADORES (documentos para o Drive) ============
-  // O gerente cria uma ficha por pessoa e anexa documentos (foto ou PDF).
+  // ============ DOCUMENTOS DE COLABORADORES (para o Drive) ============
+  // O gerente envia fotos/PDF sem identificar a pessoa.
   // Os arquivos vão para o Supabase Storage. Uma automação do Claude lê os
   // registros com status "pendente", grava o arquivo na pasta da pessoa no
   // Drive e troca o status para "noDrive".
@@ -2314,7 +2314,7 @@
     if(file.type==='application/pdf') return 'pdf';
     return 'jpg';
   }
-  async function cdUploadArquivo(file, colabId, regId){
+  async function cdUploadArquivo(file, pasta, regId){
     var blob, tipo, ext;
     if(file.type==='application/pdf'){
       if(file.size > 10*1024*1024) throw new Error('PDF muito grande (máximo 10 MB).');
@@ -2323,7 +2323,7 @@
       var dataUrl = await resizeImageFile(file, 1600);
       blob = dataURLtoBlob(dataUrl); tipo = 'image/jpeg'; ext = 'jpg';
     }
-    var caminho = 'colaboradores/' + colabId + '/' + regId + '.' + ext;
+    var caminho = 'colaboradores/' + pasta + '/' + regId + '.' + ext;
     var res = await sb.storage.from(STORAGE_BUCKET_RECEBIMENTOS).upload(caminho, blob, { contentType: tipo, upsert: true });
     if(res.error) throw res.error;
     return { url: sb.storage.from(STORAGE_BUCKET_RECEBIMENTOS).getPublicUrl(caminho).data.publicUrl, caminho: caminho, mime: tipo };
@@ -2331,137 +2331,114 @@
 
   async function renderColabFichas(main){
     var admin = isAdmin();
-    var loaded = await Promise.all([getData('colab-fichas', []), getData('colab-docs-registros', [])]);
-    var fichas = loaded[0].filter(function(f){ return f.ativo!==false; });
-    var regs = loaded[1];
+    var regs = await getData('colab-docs-registros', []);
     var localUser = (user.unit==='unidade2') ? 'boqueirao' : (user.unit || 'unidade1');
     var verTodos = user.role==='dono';
-    var fichasVis = fichas.filter(function(f){ return verTodos || f.local===localUser; })
-      .sort(function(a,b){ return a.nome.localeCompare(b.nome); });
-    var selId = window.__cdSel && fichasVis.some(function(f){ return f.id===window.__cdSel; }) ? window.__cdSel : '';
+    var vis = regs.filter(function(r){ return verTodos || r.local===localUser; });
+    var pend = vis.filter(function(r){ return r.status!=='noDrive'; })
+      .sort(function(a,b){ return (a.registradoEm||'').localeCompare(b.registradoEm||''); });
+    var enviados = vis.filter(function(r){ return r.status==='noDrive'; })
+      .sort(function(a,b){ return (b.driveEm||'').localeCompare(a.driveEm||''); }).slice(0, 40);
 
-    var html = pageHead('Fichas · Colaboradores', 'Crie uma ficha por pessoa e anexe os documentos. Uma automação envia tudo para a pasta da pessoa no Drive.');
+    var html = pageHead('Documentos · Colaboradores', 'Envie a foto ou o PDF. Não precisa dizer de quem é. A automação lê o documento e grava na pasta da pessoa no Drive.');
 
-    // Nova ficha
     html += '<div class="card" style="margin-bottom:16px;">';
-    html += '<div style="font-weight:600; font-size:14px; margin-bottom:10px;">Nova ficha</div>';
-    html += '<div class="add-row-bar" style="flex-wrap:wrap;">';
-    html += '<input class="grid-input wide" type="text" id="cd-nome" placeholder="Nome completo do colaborador" style="min-width:240px;">';
-    html += '<input class="grid-input wide" type="text" id="cd-cargo" placeholder="Cargo (opcional)" style="width:180px;">';
-    html += '<select class="grid-select" id="cd-local">' + COLAB_LOCAIS.map(function(l){ return '<option value="' + l.id + '"' + ((verTodos ? 'unidade1' : localUser)===l.id?' selected':'') + '>' + l.label + '</option>'; }).join('') + '</select>';
-    html += '<button class="btn primary" id="cd-criar">Criar ficha</button>';
-    html += '</div></div>';
+    html += '<div style="font-weight:600; font-size:14px; margin-bottom:10px;">Enviar documentos</div>';
+    html += '<div class="form-grid" style="grid-template-columns:1fr 1fr;">';
+    html += '<div class="form-field" style="margin:0;"><label for="cd-local">Local</label><select class="grid-select" id="cd-local" style="width:100%;">' +
+      COLAB_LOCAIS.map(function(l){ return '<option value="' + l.id + '"' + ((verTodos ? 'unidade1' : localUser)===l.id?' selected':'') + '>' + l.label + '</option>'; }).join('') + '</select></div>';
+    html += '<div class="form-field" style="margin:0;"><label for="cd-desc">Observação (opcional)</label><input class="grid-input wide" style="width:100%;" type="text" id="cd-desc" placeholder="Ex: atestado, holerite de outubro"></div>';
+    html += '</div>';
+    html += '<div class="form-field" style="margin-top:12px;"><label for="cd-arquivo">Foto ou PDF (pode escolher vários)</label><input type="file" id="cd-arquivo" accept="image/*,application/pdf" multiple></div>';
+    html += '<div style="margin-top:12px;"><button class="btn primary" id="cd-enviar">Enviar</button></div>';
+    html += '</div>';
 
-    // Lista de fichas
     html += '<div class="card" style="margin-bottom:16px;">';
-    html += '<div style="font-weight:600; font-size:14px; margin-bottom:10px;">Fichas (' + fichasVis.length + ')</div>';
-    if(fichasVis.length===0){
-      html += '<div class="empty">Nenhuma ficha criada ainda.</div>';
+    html += '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;"><div style="font-weight:600; font-size:14px;">Pendentes de envio ao Drive (' + pend.length + ')</div>';
+    if(admin && pend.length>0){ html += '<button class="btn primary" id="cd-enviado-todos">Marcar todos como enviados</button>'; }
+    html += '</div>';
+    if(pend.length===0){
+      html += '<div class="empty">Nenhum documento pendente.</div>';
     } else {
-      html += '<div class="table-scroll"><table><thead><tr><th>Nome</th><th>Cargo</th><th>Local</th><th>Docs</th><th>Pendentes</th><th></th></tr></thead><tbody>';
-      fichasVis.forEach(function(f){
-        var docs = regs.filter(function(r){ return r.colabId===f.id; });
-        var pend = docs.filter(function(r){ return r.status!=='noDrive'; }).length;
-        html += '<tr><td>' + escapeHtml(f.nome) + '</td><td>' + escapeHtml(f.cargo||'—') + '</td><td>' + cdLocalLabel(f.local) + '</td>' +
-          '<td class="num-cell">' + docs.length + '</td><td class="num-cell">' + pend + '</td>' +
-          '<td><button class="btn' + (f.id===selId?' primary':'') + '" data-cd-abrir="' + f.id + '" style="padding:4px 9px; font-size:11.5px;">' + (f.id===selId?'Aberta':'Abrir ficha') + '</button></td></tr>';
+      html += '<div class="table-scroll"><table><thead><tr><th>Data do envio</th><th>Local</th><th>Observação</th><th>Enviado por</th><th></th></tr></thead><tbody>';
+      pend.forEach(function(r){
+        html += '<tr><td class="num-cell">' + (r.registradoEm ? fmtDateTime(r.registradoEm) : '—') + '</td><td>' + cdLocalLabel(r.local) + '</td><td>' + escapeHtml(r.observacao||'—') + '</td><td>' + escapeHtml(r.registradoPor||'—') + '</td>' +
+          '<td style="white-space:nowrap;"><a class="btn" style="padding:4px 9px; font-size:11.5px;" href="' + escapeHtml(r.arquivoUrl) + '" target="_blank" rel="noopener">Abrir</a>' +
+          (admin ? ' <button class="btn primary" data-cd-enviado="' + r.id + '" style="padding:4px 9px; font-size:11.5px;">Marcar como enviado</button>' : '') +
+          ' <button class="btn" data-cd-remover="' + r.id + '" style="padding:4px 9px; font-size:11.5px;">Remover</button></td></tr>';
       });
       html += '</tbody></table></div>';
     }
-    html += '</div>';
-
-    // Ficha aberta
-    var ficha = fichasVis.find(function(f){ return f.id===selId; });
-    if(ficha){
-      var docsF = regs.filter(function(r){ return r.colabId===ficha.id; })
-        .sort(function(a,b){ return (b.data+b.registradoEm).localeCompare(a.data+a.registradoEm); });
-      html += '<div class="card" style="margin-bottom:16px;">';
-      html += '<div style="font-weight:600; font-size:14px;">Ficha de ' + escapeHtml(ficha.nome) + '</div>';
-      html += '<div style="font-size:11.5px; color:var(--muted); margin:2px 0 12px;">' + cdLocalLabel(ficha.local) + (ficha.cargo ? ' · ' + escapeHtml(ficha.cargo) : '') + '</div>';
-      html += '<div class="form-grid" style="grid-template-columns:1fr 1fr;">';
-      html += '<div class="form-field" style="margin:0;"><label for="cd-tipo">Tipo de documento</label><select class="grid-select" id="cd-tipo" style="width:100%;">' + COLAB_TIPOS.map(function(t){ return '<option>' + t + '</option>'; }).join('') + '</select></div>';
-      html += '<div class="form-field" style="margin:0;"><label for="cd-data">Data do documento</label><input type="date" id="cd-data" value="' + todayISO() + '"></div>';
-      html += '</div>';
-      html += '<div class="form-field" style="margin-top:12px;"><label for="cd-desc">Observação (opcional)</label><input class="grid-input wide" style="width:100%;" type="text" id="cd-desc" placeholder="Ex: atestado de 2 dias, mês de outubro"></div>';
-      html += '<div class="form-field" style="margin-top:12px;"><label for="cd-arquivo">Foto ou PDF</label><input type="file" id="cd-arquivo" accept="image/*,application/pdf" multiple></div>';
-      html += '<div style="margin-top:12px;"><button class="btn primary" id="cd-enviar">Enviar documento</button></div>';
-      html += '</div>';
-
-      html += '<div class="card" style="margin-bottom:16px;">';
-      html += '<div style="font-weight:600; font-size:14px; margin-bottom:10px;">Documentos de ' + escapeHtml(ficha.nome) + '</div>';
-      if(docsF.length===0){
-        html += '<div class="empty">Nenhum documento enviado nesta ficha.</div>';
-      } else {
-        html += '<div class="table-scroll"><table><thead><tr><th>Data</th><th>Tipo</th><th>Observação</th><th>Enviado por</th><th>Drive</th><th></th></tr></thead><tbody>';
-        docsF.forEach(function(r){
-          html += '<tr><td class="num-cell">' + escapeHtml(r.data||'') + '</td><td>' + escapeHtml(r.tipo) + '</td><td>' + escapeHtml(r.observacao||'—') + '</td><td>' + escapeHtml(r.registradoPor||'—') + '</td>' +
-            '<td>' + (r.status==='noDrive' ? '<span style="color:var(--ok,#2e7d32); font-weight:600;">No Drive</span>' : '<span style="color:var(--muted);">Pendente</span>') + '</td>' +
-            '<td style="white-space:nowrap;"><a class="btn" style="padding:4px 9px; font-size:11.5px;" href="' + escapeHtml(r.arquivoUrl) + '" target="_blank" rel="noopener">Abrir</a>' +
-            (r.status!=='noDrive' ? ' <button class="btn" data-cd-remover="' + r.id + '" style="padding:4px 9px; font-size:11.5px;">Remover</button>' : '') + '</td></tr>';
-        });
-        html += '</tbody></table></div>';
-      }
-      html += '</div>';
+    if(enviados.length>0){
+      html += '<details style="margin-top:12px;"><summary style="cursor:pointer; font-size:12.5px; font-weight:600;">Já enviados ao Drive (últimos ' + enviados.length + ')</summary><div class="table-scroll" style="margin-top:8px;"><table><thead><tr><th>Enviado em</th><th>Local</th><th>Observação</th><th>Pasta no Drive</th><th></th></tr></thead><tbody>';
+      enviados.forEach(function(r){
+        html += '<tr><td class="num-cell">' + (r.driveEm ? fmtDateTime(r.driveEm) : '—') + '</td><td>' + cdLocalLabel(r.local) + '</td><td>' + escapeHtml(r.observacao||'—') + '</td><td>' + escapeHtml(r.colabNome||'—') + '</td>' +
+          '<td style="white-space:nowrap;"><a class="btn" style="padding:4px 9px; font-size:11.5px;" href="' + escapeHtml(r.arquivoUrl) + '" target="_blank" rel="noopener">Abrir</a>' +
+          (admin ? ' <button class="btn" data-cd-desfazer="' + r.id + '" style="padding:4px 9px; font-size:11.5px;">Desfazer</button>' : '') + '</td></tr>';
+      });
+      html += '</tbody></table></div></details>';
     }
+    html += '</div>';
 
     main.innerHTML = html;
 
-    document.getElementById('cd-criar').onclick = async function(){
-      var nome = document.getElementById('cd-nome').value.trim();
-      var cargo = document.getElementById('cd-cargo').value.trim();
+    document.getElementById('cd-enviar').onclick = async function(){
+      var btn = document.getElementById('cd-enviar');
+      var files = Array.prototype.slice.call(document.getElementById('cd-arquivo').files || []);
+      if(files.length===0){ showToast('Escolha uma foto ou um PDF.', 'error'); return; }
       var local = document.getElementById('cd-local').value;
-      if(!nome){ showToast('Informe o nome do colaborador.', 'error'); return; }
-      var todas = await getData('colab-fichas', []);
-      var norm = normNome(nome);
-      if(todas.some(function(f){ return f.ativo!==false && normNome(f.nome)===norm && f.local===local; })){
-        showToast('Já existe uma ficha com esse nome neste local.', 'error'); return;
+      var obs = document.getElementById('cd-desc').value.trim();
+      btn.disabled = true; btn.textContent = 'Enviando…';
+      try{
+        var novos = [];
+        for(var i=0; i<files.length; i++){
+          var regId = 'cdr'+Date.now()+Math.random().toString(36).slice(2,7);
+          var up = await cdUploadArquivo(files[i], local, regId);
+          novos.push({ id:regId, local:local, observacao:obs, arquivoUrl:up.url, arquivoCaminho:up.caminho, mime:up.mime, nomeOriginal:files[i].name,
+            registradoPor:user.nome||labelRole(user.role), registradoUsername:user.username||'', registradoEm:new Date().toISOString(),
+            status:'pendente', driveEm:null, colabNome:null });
+        }
+        var todos = await getData('colab-docs-registros', []);
+        novos.forEach(function(n){ todos.push(n); });
+        var saved = await setData('colab-docs-registros', todos);
+        if(saved){ logAudit(local==='unidade1'?'unidade1':'unidade2', 'Enviou documentos de colaborador', novos.length + ' arquivo(s)'); showToast(novos.length + ' arquivo(s) enviado(s).'); }
+      }catch(err){
+        showToast('Não consegui enviar: ' + (err && err.message ? err.message : 'erro'), 'error');
       }
-      var nova = { id:'cf'+Date.now()+Math.random().toString(36).slice(2,5), nome:nome, cargo:cargo, local:local, ativo:true, criadoEm:new Date().toISOString(), criadoPor:user.nome||labelRole(user.role) };
-      todas.push(nova);
-      var saved = await setData('colab-fichas', todas);
-      if(saved){ logAudit(local==='unidade1'?'unidade1':'unidade2', 'Criou ficha de colaborador', nome); window.__cdSel = nova.id; showToast('Ficha criada.'); }
       renderColabFichas(main);
     };
 
-    main.querySelectorAll('[data-cd-abrir]').forEach(function(btn){
-      btn.onclick = function(){ window.__cdSel = btn.getAttribute('data-cd-abrir'); renderColabFichas(main); };
+    async function cdMarcar(ids, novoStatus){
+      var todos = await getData('colab-docs-registros', []);
+      var n = 0;
+      todos.forEach(function(r){
+        if(ids.indexOf(r.id)===-1) return;
+        r.status = novoStatus;
+        r.driveEm = novoStatus==='noDrive' ? new Date().toISOString() : null;
+        r.driveMarcadoPor = novoStatus==='noDrive' ? (user.nome||labelRole(user.role)) : null;
+        n++;
+      });
+      var saved = await setData('colab-docs-registros', todos);
+      if(saved){ logAudit(user.unit||'unidade1', novoStatus==='noDrive' ? 'Marcou documentos de colaborador como enviados ao Drive' : 'Desfez envio ao Drive', n + ' documento(s)'); }
+      renderColabFichas(main);
+    }
+    main.querySelectorAll('[data-cd-enviado]').forEach(function(btn){
+      btn.onclick = function(){ cdMarcar([btn.getAttribute('data-cd-enviado')], 'noDrive'); };
     });
-
-    var envBtn = document.getElementById('cd-enviar');
-    if(envBtn){
-      envBtn.onclick = async function(){
-        var input = document.getElementById('cd-arquivo');
-        var files = Array.prototype.slice.call(input.files || []);
-        if(files.length===0){ showToast('Escolha uma foto ou um PDF.', 'error'); return; }
-        var tipo = document.getElementById('cd-tipo').value;
-        var data = document.getElementById('cd-data').value || todayISO();
-        var obs = document.getElementById('cd-desc').value.trim();
-        envBtn.disabled = true; envBtn.textContent = 'Enviando…';
-        var ok = 0;
-        try{
-          var novos = [];
-          for(var i=0; i<files.length; i++){
-            var regId = 'cdr'+Date.now()+Math.random().toString(36).slice(2,7);
-            var up = await cdUploadArquivo(files[i], ficha.id, regId);
-            novos.push({ id:regId, colabId:ficha.id, colabNome:ficha.nome, local:ficha.local, tipo:tipo, data:data, observacao:obs,
-              arquivoUrl:up.url, arquivoCaminho:up.caminho, mime:up.mime, nomeOriginal:files[i].name,
-              registradoPor:user.nome||labelRole(user.role), registradoUsername:user.username||'', registradoEm:new Date().toISOString(),
-              status:'pendente', driveEm:null });
-          }
-          var todos = await getData('colab-docs-registros', []);
-          novos.forEach(function(n){ todos.push(n); });
-          var saved = await setData('colab-docs-registros', todos);
-          if(saved){ ok = novos.length; logAudit(ficha.local==='unidade1'?'unidade1':'unidade2', 'Enviou documento de colaborador', ficha.nome + ' · ' + tipo + ' · ' + ok + ' arquivo(s)'); showToast(ok + ' arquivo(s) enviado(s).'); }
-        }catch(err){
-          showToast('Não consegui enviar: ' + (err && err.message ? err.message : 'erro'), 'error');
-        }
-        renderColabFichas(main);
+    main.querySelectorAll('[data-cd-desfazer]').forEach(function(btn){
+      btn.onclick = function(){ cdMarcar([btn.getAttribute('data-cd-desfazer')], 'pendente'); };
+    });
+    var todosBtn = document.getElementById('cd-enviado-todos');
+    if(todosBtn){
+      todosBtn.onclick = async function(){
+        if(!(await showConfirm('Marcar todos os ' + pend.length + ' documentos pendentes como enviados ao Drive?', 'Marcar todos'))) return;
+        cdMarcar(pend.map(function(r){ return r.id; }), 'noDrive');
       };
     }
 
     main.querySelectorAll('[data-cd-remover]').forEach(function(btn){
       btn.onclick = async function(){
-        if(!(await showConfirm('Remover este documento da ficha?', 'Remover'))) return;
+        if(!(await showConfirm('Remover este documento?', 'Remover'))) return;
         var id = btn.getAttribute('data-cd-remover');
         var todos = await getData('colab-docs-registros', []);
         var alvo = todos.find(function(r){ return r.id===id; });
@@ -2469,7 +2446,7 @@
         var saved = await setData('colab-docs-registros', todos.filter(function(r){ return r.id!==id; }));
         if(saved){
           try{ if(alvo.arquivoCaminho) await sb.storage.from(STORAGE_BUCKET_RECEBIMENTOS).remove([alvo.arquivoCaminho]); }catch(e){}
-          logAudit(alvo.local==='unidade1'?'unidade1':'unidade2', 'Removeu documento de colaborador', alvo.colabNome + ' · ' + alvo.tipo);
+          logAudit(alvo.local==='unidade1'?'unidade1':'unidade2', 'Removeu documento de colaborador', alvo.observacao||'');
         }
         renderColabFichas(main);
       };
