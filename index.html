@@ -303,10 +303,10 @@
   var NAV = [
     {id:'dashboard', label:'Visão geral', icon:'ti-chart-bar', roles:['dono','gerente']},
     {id:'motoboys', label:'Motoboys', icon:'ti-motorbike', roles:['dono','gerente','supervisor','caixa']},
-    {id:'fechamento', label:'Fechamento de caixa', icon:'ti-cash', roles:['dono','gerente','caixa']},
-    {id:'bebidas', label:'Estoque · Bebidas', icon:'ti-fridge', roles:['dono','gerente','supervisor','equipe','caixa']},
+    // {id:'fechamento', label:'Fechamento de caixa', icon:'ti-cash', roles:['dono','gerente','caixa']}, // desativado a pedido (26/10/2026) — os dados continuam salvos; reative removendo o comentário
+    // {id:'bebidas', label:'Estoque · Bebidas', icon:'ti-fridge', roles:['dono','gerente','supervisor','equipe','caixa']}, // desativado a pedido (26/10/2026) — os dados continuam salvos; reative removendo o comentário
     {id:'recebimentos', label:'Recebimentos', icon:'ti-camera', roles:['dono','gerente','supervisor','equipe']},
-    {id:'desperdicio', label:'Desperdício · Boqueirão', icon:'ti-trash', roles:['dono','gerente']},
+    {id:'desperdicio', label:'Desperdício', icon:'ti-trash', roles:['dono','gerente']},
     {id:'documentos', label:'Documentos', icon:'ti-folder', roles:['dono','gerente']},
     {id:'conteudo', label:'Receitas & Processos', icon:'ti-book-2', roles:['dono','gerente','supervisor','equipe','caixa']},
     {id:'regra-tres', label:'Regra de três', icon:'ti-calculator', roles:['dono','gerente','supervisor','equipe','caixa']},
@@ -833,7 +833,7 @@
     var recebimentos = dLoaded[3];
     var conteudoItems = dLoaded[4];
     var desperdicios = dLoaded[5];
-    var pendDesp = desperdicios.filter(function(r){ return r.status!=='lancado'; }).length;
+    function pendDespLocal(id){ return desperdicios.filter(function(r){ return r.status!=='lancado' && dpLocalId(r)===id; }).length; }
 
     function unitTotals(unitId){
       var list = entries.filter(function(e){ return e.unit===unitId; });
@@ -880,7 +880,9 @@
     html += atalhoTile('recebimentos-unidade2', 'Recebimentos pendentes · Unidade 2', pendRcU2);
     html += atalhoTile('rendimento-unidade1', 'Rendimento · Unidade 1 (hoje / semana)', rendHojeU1 + ' / ' + rendSemanaU1);
     html += atalhoTile('rendimento-unidade2', 'Rendimento · Unidade 2 (hoje / semana)', rendHojeU2 + ' / ' + rendSemanaU2);
-    html += atalhoTile('desperdicio', 'Desperdício pendente · Boqueirão', pendDesp);
+    DESPERDICIO_LOCAIS.forEach(function(l){
+      html += atalhoTile('desperdicio-' + l.id, 'Desperdício pendente · ' + l.label, pendDespLocal(l.id));
+    });
     html += '</div>';
     html += '</div>';
 
@@ -908,7 +910,7 @@
         else if(key==='recebimentos-unidade2'){ window.__rcUnit='unidade2'; currentPage='recebimentos'; renderApp(); }
         else if(key==='rendimento-unidade1'){ window.__rendUnit='unidade1'; window.__ctTab='rendimento'; currentPage='conteudo'; renderApp(); }
         else if(key==='rendimento-unidade2'){ window.__rendUnit='unidade2'; window.__ctTab='rendimento'; currentPage='conteudo'; renderApp(); }
-        else if(key==='desperdicio'){ currentPage='desperdicio'; renderApp(); }
+        else if(key.indexOf('desperdicio-')===0){ dpDefinirLocal(key.slice('desperdicio-'.length)); currentPage='desperdicio'; renderApp(); }
       };
     });
   }
@@ -2009,19 +2011,77 @@
     return p.length===3 ? (p[2] + '/' + p[1] + '/' + p[0]) : iso;
   }
 
-  // ============ DESPERDÍCIO · BOQUEIRÃO ============
-  // O líder do Boqueirão registra aqui. O dono/gerente lança no Alô Chefia
-  // e marca como lançado. Só texto (sem foto), então o registro é leve.
+  // ============ DESPERDÍCIO (Tatuquara U1/U2 + Boqueirão) ============
+  // O líder registra aqui. O dono/gerente lança no Alô Chefia e marca como lançado.
+  // O item precisa existir na lista padrão do Alô Chefia (chave 'itens-alochefia'),
+  // para o nome ser sempre igual ao do Alô Chefia. Só texto (sem foto): registro leve.
   var DESPERDICIO_MOTIVOS = ['Vencido / validade','Queda ou acidente','Erro de preparo','Sobra de produção','Pedido errado / devolução','Quebra ou avaria','Outro'];
-  var DESPERDICIO_MEDIDAS = ['un','kg','g','L','ml'];
+  var DESPERDICIO_LOCAIS = [
+    {id:'unidade1', label:'Tatuquara · Unidade 1'},
+    {id:'unidade2', label:'Tatuquara · Unidade 2'},
+    {id:'boqueirao', label:'Boqueirão'}
+  ];
 
   function fmtQtd(q){ return String(q).replace('.', ','); }
+
+  // Tira acento, caixa e pontuação, para comparar nomes.
+  function normNome(s){
+    return String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+  }
+
+  // Lista padrão de itens (nomes iguais aos do Alô Chefia).
+  async function getItensAlo(){
+    var v = await getData('itens-alochefia', null);
+    return (v && v.itens) ? v.itens : [];
+  }
+
+  // Sugere o nome do Alô Chefia para um nome digitado à mão.
+  // Só sugere quando o nome é igual sem acento/caixa, ou muito parecido.
+  function sugerirNomePadrao(nome, catalogo){
+    var n = normNome(nome);
+    var i;
+    for(i=0;i<catalogo.length;i++){ if(normNome(catalogo[i].nome)===n) return catalogo[i].nome; }
+    var tk = n.split(' ').filter(Boolean);
+    var melhor = '', melhorPt = 0;
+    catalogo.forEach(function(c){
+      var ct = normNome(c.nome).split(' ').filter(Boolean);
+      var inter = tk.filter(function(t){ return ct.indexOf(t)!==-1; }).length;
+      var uniao = tk.length + ct.length - inter;
+      var pt = uniao ? inter/uniao : 0;
+      if(pt > melhorPt){ melhorPt = pt; melhor = c.nome; }
+    });
+    return melhorPt >= 0.6 ? melhor : '';
+  }
+
+  // Registros antigos do Boqueirão guardavam o texto "Boqueirão" em vez do código.
+  function dpLocalId(r){
+    var l = r.local;
+    if(!l || l==='Boqueirão') return 'boqueirao';
+    return l;
+  }
+  function dpLocalLabel(id){
+    var l = DESPERDICIO_LOCAIS.find(function(x){ return x.id===id; });
+    return l ? l.label : id;
+  }
+  function dpLocalAtual(){
+    var ids = DESPERDICIO_LOCAIS.map(function(l){ return l.id; });
+    if(window.__dpLocal && ids.indexOf(window.__dpLocal)!==-1) return window.__dpLocal;
+    var salvo = null;
+    try{ salvo = localStorage.getItem('cg_dp_local'); }catch(e){}
+    if(salvo && ids.indexOf(salvo)!==-1) return salvo;
+    if(user.unit && ids.indexOf(user.unit)!==-1) return user.unit;
+    return 'unidade1';
+  }
+  function dpDefinirLocal(id){
+    window.__dpLocal = id;
+    try{ localStorage.setItem('cg_dp_local', id); }catch(e){}
+  }
 
   function desperdicioRowHtml(r, podeLancar, podeRemover){
     var h = '<tr>';
     h += '<td class="num-cell">' + fmtDateBR(r.data) + '</td>';
     h += '<td style="font-weight:600;">' + escapeHtml(r.item) + '</td>';
-    h += '<td class="num-cell">' + fmtQtd(r.quantidade) + ' ' + escapeHtml(r.medida||'') + '</td>';
+    h += '<td class="num-cell">' + fmtQtd(r.quantidade) + ' ' + escapeHtml(r.unidade || r.medida || '') + '</td>';
     h += '<td>' + escapeHtml(r.motivo||'—') + '</td>';
     h += '<td style="color:var(--muted);">' + escapeHtml(r.observacao||'') + '</td>';
     h += '<td style="font-size:12px; color:var(--muted);">' + escapeHtml(r.registradoPor||'—') + '<br>' + fmtDateTime(r.registradoEm);
@@ -2037,53 +2097,60 @@
   async function renderDesperdicio(main){
     var admin = isAdmin();
     var all = await getData('desperdicio-registros', []);
+    var catalogo = await getItensAlo();
+    var local = dpLocalAtual();
 
-    var pendentes = all.filter(function(r){ return r.status!=='lancado'; })
+    // Mapa nome normalizado -> item do catálogo (para achar o nome oficial).
+    var catMap = {};
+    catalogo.forEach(function(c){ catMap[normNome(c.nome)] = c; });
+
+    var doLocal = all.filter(function(r){ return dpLocalId(r)===local; });
+    var pendentes = doLocal.filter(function(r){ return r.status!=='lancado'; })
       .sort(function(a,b){ return (a.data+a.registradoEm).localeCompare(b.data+b.registradoEm); });
-    var lancadosTodos = all.filter(function(r){ return r.status==='lancado'; })
+    var lancadosTodos = doLocal.filter(function(r){ return r.status==='lancado'; })
       .sort(function(a,b){ return (b.data+b.registradoEm).localeCompare(a.data+a.registradoEm); });
     var lancados = lancadosTodos.slice(0, 100);
 
-    // Sugestões de item (os já usados antes), sem repetir.
-    var vistos = {}, itensSug = [];
-    all.forEach(function(r){
-      var k = (r.item||'').trim().toLowerCase();
-      if(k && !vistos[k]){ vistos[k] = true; itensSug.push(r.item.trim()); }
-    });
-    itensSug.sort(function(a,b){ return a.localeCompare(b, 'pt-BR'); });
-
     var dataDef = window.__dpData || todayISO();
     var motivoDef = window.__dpMotivo || DESPERDICIO_MOTIVOS[0];
-    var medidaDef = window.__dpMedida || 'un';
 
-    var html = pageHead('Desperdício · Boqueirão', 'Registre o que foi desperdiçado. O lançamento no Alô Chefia é feito depois pela gerência.');
+    var html = pageHead('Desperdício', 'Registre o que foi desperdiçado. O lançamento no Alô Chefia é feito depois pela gerência.');
 
-    html += '<div class="card" style="margin-bottom:20px;">';
-    html += '<div style="font-weight:600; font-size:14px; margin-bottom:12px;">Registrar desperdício</div>';
-    html += '<div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">';
-    html += '<div class="form-field" style="margin:0; width:160px;"><label for="dp-data">Data</label><input type="date" id="dp-data" value="' + dataDef + '"></div>';
-    html += '<div class="form-field" style="margin:0; flex:1; min-width:200px;"><label for="dp-item">Item</label><input type="text" id="dp-item" list="dp-itens" autocomplete="off" placeholder="Ex.: pão brioche, carne, molho"></div>';
-    html += '<datalist id="dp-itens">';
-    itensSug.forEach(function(n){ html += '<option value="' + escapeHtml(n) + '"></option>'; });
-    html += '</datalist>';
-    html += '<div class="form-field" style="margin:0; width:100px;"><label for="dp-qtd">Quantidade</label><input type="text" inputmode="decimal" id="dp-qtd" placeholder="0"></div>';
-    html += '<div class="form-field" style="margin:0; width:85px;"><label for="dp-medida">Medida</label><select id="dp-medida">';
-    DESPERDICIO_MEDIDAS.forEach(function(m){ html += '<option value="' + m + '"' + (m===medidaDef?' selected':'') + '>' + m + '</option>'; });
-    html += '</select></div>';
-    html += '<div class="form-field" style="margin:0; width:210px;"><label for="dp-motivo">Motivo</label><select id="dp-motivo">';
-    DESPERDICIO_MOTIVOS.forEach(function(m){ html += '<option value="' + escapeHtml(m) + '"' + (m===motivoDef?' selected':'') + '>' + escapeHtml(m) + '</option>'; });
-    html += '</select></div>';
-    html += '<div class="form-field" style="margin:0; flex:1; min-width:200px;"><label for="dp-obs">Observação</label><input type="text" id="dp-obs" placeholder="Opcional"></div>';
-    html += '<button class="btn primary" id="dp-registrar" style="height:38px;">Registrar</button>';
+    // Seletor de local (mostra pendentes dos outros locais para a gerência).
+    html += '<div class="unit-toggle" style="margin-bottom:14px; width:fit-content; flex-wrap:wrap;">';
+    DESPERDICIO_LOCAIS.forEach(function(l){
+      var n = admin ? all.filter(function(r){ return dpLocalId(r)===l.id && r.status!=='lancado'; }).length : 0;
+      html += '<button data-dp-local="' + l.id + '" class="' + (l.id===local?'active':'') + '">' + l.label + (n>0 ? ' (' + n + ')' : '') + '</button>';
+    });
     html += '</div>';
-    html += '</div>';
+
+    if(catalogo.length===0){
+      html += '<div class="card" style="margin-bottom:20px;"><div class="empty">A lista de itens do Alô Chefia ainda não foi carregada. Peça ao Dono para importar em Configurações → Itens padrão (Alô Chefia).</div></div>';
+    } else {
+      html += '<div class="card" style="margin-bottom:20px;">';
+      html += '<div style="font-weight:600; font-size:14px; margin-bottom:12px;">Registrar desperdício · ' + dpLocalLabel(local) + '</div>';
+      html += '<div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">';
+      html += '<div class="form-field" style="margin:0; width:160px;"><label for="dp-data">Data</label><input type="date" id="dp-data" value="' + dataDef + '"></div>';
+      html += '<div class="form-field" style="margin:0; flex:1; min-width:220px;"><label for="dp-item">Item (nome igual ao do Alô Chefia)</label><input type="text" id="dp-item" list="dp-itens" autocomplete="off" placeholder="Digite e escolha na lista"></div>';
+      html += '<datalist id="dp-itens">';
+      catalogo.forEach(function(c){ html += '<option value="' + escapeHtml(c.nome) + '"></option>'; });
+      html += '</datalist>';
+      html += '<div class="form-field" style="margin:0; width:130px;"><label for="dp-qtd">Quantidade <span id="dp-unid" style="color:var(--muted);"></span></label><input type="text" inputmode="decimal" id="dp-qtd" placeholder="0"></div>';
+      html += '<div class="form-field" style="margin:0; width:210px;"><label for="dp-motivo">Motivo</label><select id="dp-motivo">';
+      DESPERDICIO_MOTIVOS.forEach(function(m){ html += '<option value="' + escapeHtml(m) + '"' + (m===motivoDef?' selected':'') + '>' + escapeHtml(m) + '</option>'; });
+      html += '</select></div>';
+      html += '<div class="form-field" style="margin:0; flex:1; min-width:200px;"><label for="dp-obs">Observação</label><input type="text" id="dp-obs" placeholder="Opcional"></div>';
+      html += '<button class="btn primary" id="dp-registrar" style="height:38px;">Registrar</button>';
+      html += '</div>';
+      html += '</div>';
+    }
 
     html += '<div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; margin-bottom:10px;">';
     html += '<div style="font-weight:600; font-size:14px;">Pendentes de lançamento (' + pendentes.length + ')</div>';
     if(admin && pendentes.length>0){ html += '<button class="btn" id="dp-lancar-todos" style="padding:6px 10px; font-size:12.5px;">Marcar todos como lançados</button>'; }
     html += '</div>';
     if(pendentes.length===0){
-      html += '<div class="empty" style="margin-bottom:20px;">Nenhum desperdício pendente.</div>';
+      html += '<div class="empty" style="margin-bottom:20px;">Nenhum desperdício pendente neste local.</div>';
     } else {
       html += '<div class="table-scroll" style="margin-bottom:20px;"><table><thead><tr><th>Data</th><th>Item</th><th>Quantidade</th><th>Motivo</th><th>Observação</th><th>Registrado por</th><th></th></tr></thead><tbody>';
       pendentes.forEach(function(r){
@@ -2096,7 +2163,7 @@
     html += '<button class="btn" id="dp-toggle-hist" style="margin-bottom:12px;">Ver histórico de lançados (' + lancadosTodos.length + ')</button>';
     html += '<div id="dp-hist" style="display:none;">';
     if(lancados.length===0){
-      html += '<div class="empty">Nenhum desperdício lançado ainda.</div>';
+      html += '<div class="empty">Nenhum desperdício lançado ainda neste local.</div>';
     } else {
       html += '<div class="table-scroll"><table><thead><tr><th>Data</th><th>Item</th><th>Quantidade</th><th>Motivo</th><th>Observação</th><th>Registrado por</th><th></th></tr></thead><tbody>';
       lancados.forEach(function(r){ html += desperdicioRowHtml(r, false, admin); });
@@ -2109,30 +2176,40 @@
 
     main.innerHTML = html;
 
-    if(window.__dpFocus){
-      window.__dpFocus = false;
-      var itemEl = document.getElementById('dp-item');
-      if(itemEl) itemEl.focus();
+    main.querySelectorAll('[data-dp-local]').forEach(function(b){
+      b.onclick = function(){ dpDefinirLocal(b.getAttribute('data-dp-local')); renderDesperdicio(main); };
+    });
+
+    var itemEl = document.getElementById('dp-item');
+    if(itemEl){
+      var mostrarUnidade = function(){
+        var c = catMap[normNome(itemEl.value)];
+        document.getElementById('dp-unid').textContent = c ? '(' + c.unidade + ')' : '';
+      };
+      itemEl.addEventListener('input', mostrarUnidade);
+      itemEl.addEventListener('change', mostrarUnidade);
+      if(window.__dpFocus){ window.__dpFocus = false; itemEl.focus(); }
     }
 
     async function registrar(){
+      var itemDigitado = document.getElementById('dp-item').value.trim();
+      var cat = catMap[normNome(itemDigitado)];
+      if(!itemDigitado){ showToast('Informe o item desperdiçado.', 'error'); return; }
+      if(!cat){ showToast('Item não encontrado. Escolha um item da lista (nome igual ao do Alô Chefia).', 'error'); return; }
       var dataVal = document.getElementById('dp-data').value || todayISO();
-      var itemVal = document.getElementById('dp-item').value.trim();
       var qtdVal = parseFloat(document.getElementById('dp-qtd').value.trim().replace(',', '.'));
-      var medidaVal = document.getElementById('dp-medida').value;
       var motivoVal = document.getElementById('dp-motivo').value;
       var obsVal = document.getElementById('dp-obs').value.trim();
-      if(!itemVal){ showToast('Informe o item desperdiçado.', 'error'); return; }
       if(!(qtdVal > 0)){ showToast('Informe uma quantidade maior que zero.', 'error'); return; }
       var btn = document.getElementById('dp-registrar');
       btn.disabled = true;
       var novo = {
         id: 'dp_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
-        local: 'Boqueirão',
+        local: local,
         data: dataVal,
-        item: itemVal,
+        item: cat.nome,
+        unidade: cat.unidade,
         quantidade: qtdVal,
-        medida: medidaVal,
         motivo: motivoVal,
         observacao: obsVal,
         registradoPor: user.nome || labelRole(user.role),
@@ -2148,18 +2225,20 @@
       if(!saved){ btn.disabled = false; return; }
       window.__dpData = dataVal;
       window.__dpMotivo = motivoVal;
-      window.__dpMedida = medidaVal;
       window.__dpFocus = true;
-      logAudit('Boqueirão', 'Registrou desperdício', itemVal + ' · ' + fmtQtd(qtdVal) + ' ' + medidaVal + ' · ' + motivoVal);
+      logAudit(dpLocalLabel(local), 'Registrou desperdício', cat.nome + ' · ' + fmtQtd(qtdVal) + ' ' + cat.unidade + ' · ' + motivoVal);
       showToast('Desperdício registrado!', 'success');
       renderDesperdicio(main);
     }
-    document.getElementById('dp-registrar').onclick = registrar;
-    ['dp-qtd','dp-obs'].forEach(function(id){
-      document.getElementById(id).addEventListener('keydown', function(ev){
-        if(ev.key==='Enter'){ ev.preventDefault(); registrar(); }
+    var btnReg = document.getElementById('dp-registrar');
+    if(btnReg){
+      btnReg.onclick = registrar;
+      ['dp-qtd','dp-obs'].forEach(function(id){
+        document.getElementById(id).addEventListener('keydown', function(ev){
+          if(ev.key==='Enter'){ ev.preventDefault(); registrar(); }
+        });
       });
-    });
+    }
 
     var histToggle = document.getElementById('dp-toggle-hist');
     var histDiv = document.getElementById('dp-hist');
@@ -2181,7 +2260,7 @@
         item.lancadoEm = new Date().toISOString();
         var saved = await setData('desperdicio-registros', allNow);
         if(!saved) return;
-        logAudit('Boqueirão', 'Marcou desperdício como lançado', item.item + ' · ' + fmtDateBR(item.data));
+        logAudit(dpLocalLabel(dpLocalId(item)), 'Marcou desperdício como lançado', item.item + ' · ' + fmtDateBR(item.data));
         renderDesperdicio(main);
       };
     });
@@ -2191,7 +2270,7 @@
       btnTodos.onclick = async function(){
         var ids = {};
         pendentes.forEach(function(r){ ids[r.id] = true; });
-        if(!(await showConfirm('Marcar os ' + pendentes.length + ' itens pendentes como lançados no Alô Chefia?', 'Marcar todos'))) return;
+        if(!(await showConfirm('Marcar os ' + pendentes.length + ' itens pendentes de ' + dpLocalLabel(local) + ' como lançados no Alô Chefia?', 'Marcar todos'))) return;
         var allNow = await getData('desperdicio-registros', []);
         var agora = new Date().toISOString();
         var nome = user.nome || labelRole(user.role);
@@ -2201,7 +2280,7 @@
         });
         var saved = await setData('desperdicio-registros', allNow);
         if(!saved) return;
-        logAudit('Boqueirão', 'Marcou desperdícios como lançados', n + ' itens');
+        logAudit(dpLocalLabel(local), 'Marcou desperdícios como lançados', n + ' itens');
         showToast(n + ' itens marcados como lançados.', 'success');
         renderDesperdicio(main);
       };
@@ -2216,7 +2295,7 @@
         allNow = allNow.filter(function(x){ return x.id!==id; });
         var saved = await setData('desperdicio-registros', allNow);
         if(!saved) return;
-        if(alvo){ logAudit('Boqueirão', 'Removeu registro de desperdício', alvo.item + ' · ' + fmtDateBR(alvo.data)); }
+        if(alvo){ logAudit(dpLocalLabel(dpLocalId(alvo)), 'Removeu registro de desperdício', alvo.item + ' · ' + fmtDateBR(alvo.data)); }
         renderDesperdicio(main);
       };
     });
@@ -3072,6 +3151,8 @@
     importados.forEach(function(n){ if(n) set[String(n).trim()] = true; });
     var precos = await getData('insumos-precos', {});
     Object.keys(precos).forEach(function(n){ if(n) set[n.trim()] = true; });
+    var padraoAlo = await getItensAlo();
+    padraoAlo.forEach(function(c){ if(c && c.nome) set[c.nome.trim()] = true; });
     return Object.keys(set).sort(function(a,b){ return a.localeCompare(b); });
   }
 
@@ -4583,6 +4664,22 @@
     Object.keys(precosAtuais).forEach(function(n){ if(nomesInsumos.indexOf(n)===-1) nomesInsumos.push(n); });
     nomesInsumos.sort(function(a,b){ return a.localeCompare(b); });
 
+    var catalogoAlo = await getItensAlo();
+    var catAloMeta = (await getData('itens-alochefia', null)) || {};
+    var catAloSet = {};
+    catalogoAlo.forEach(function(ci){ catAloSet[ci.nome] = true; });
+    var usoNome = {};
+    cfgLoaded[3].forEach(function(it){
+      var visto = {};
+      var contar = function(ing){
+        var nm = (ing && ing.nome ? String(ing.nome) : '').trim();
+        if(nm && !visto[nm]){ visto[nm] = true; usoNome[nm] = (usoNome[nm]||0) + 1; }
+      };
+      (it.ingredientes||[]).forEach(contar);
+      (it.producoes||[]).forEach(function(pr){ (pr.ingredientes||[]).forEach(contar); });
+    });
+    var foraPadrao = catalogoAlo.length ? Object.keys(usoNome).filter(function(nm){ return !catAloSet[nm]; }).sort(function(a,b){ return a.localeCompare(b, 'pt-BR'); }) : [];
+
     for(var i=0;i<UNITS.length;i++){
       var u = UNITS[i];
       var rates = ratesByUnit[i];
@@ -4647,6 +4744,36 @@
     html += '<input class="grid-input wide" type="text" id="whats-link" placeholder="Link de convite do grupo" style="width:220px; display:none;">';
     html += '<button class="btn primary" id="whats-add">Adicionar</button>';
     html += '</div>';
+    html += '</div>';
+
+    html += '<div style="height:16px"></div>';
+    html += '<div class="card">';
+    html += '<div style="font-weight:600; font-size:14px;">Itens padrão (Alô Chefia)</div>';
+    html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Lista oficial de nomes, igual à do Alô Chefia. O Desperdício usa esta lista, e a produção vai usar também. ' +
+      (catalogoAlo.length ? catalogoAlo.length + ' itens · fonte: ' + escapeHtml(catAloMeta.fonte||'—') + (catAloMeta.atualizadoEm ? ' · atualizada em ' + fmtDateTime(catAloMeta.atualizadoEm) : '') : 'Nenhum item carregado ainda.') + '</div>';
+    html += '<details style="margin-top:12px;"><summary style="cursor:pointer; font-size:12.5px; font-weight:600;">Acrescentar itens novos</summary>';
+    html += '<div style="font-size:11.5px; color:var(--muted); margin:8px 0;">Cole um item por linha, com o nome exato do Alô Chefia. Opcional: ponto e vírgula e a unidade (kg, un, L). Exemplo: tomate in natura;kg</div>';
+    html += '<textarea id="itens-alo-novos" rows="5" style="width:100%; padding:8px 9px; border:1px solid var(--line); border-radius:7px; background:var(--paper); font-family:inherit; font-size:13px;"></textarea>';
+    html += '<div style="margin-top:8px;"><button class="btn primary" id="itens-alo-add">Acrescentar à lista</button></div></details>';
+    if(catalogoAlo.length){
+      html += '<div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--line);">';
+      html += '<div style="font-weight:600; font-size:13px;">Nomes em receitas fora do padrão (' + foraPadrao.length + ')</div>';
+      if(foraPadrao.length===0){
+        html += '<div class="empty">Todos os insumos das receitas já usam o nome do Alô Chefia.</div>';
+      } else {
+        html += '<div style="font-size:11.5px; color:var(--muted); margin:2px 0 8px;">Escolha o nome do Alô Chefia em cada linha. Linha vazia = não muda. A troca vale nas receitas, nos registros de produção e nos preços. Confira as sugestões antes de aplicar.</div>';
+        html += '<datalist id="itens-alo-lista">' + catalogoAlo.map(function(ci){ return '<option value="' + escapeHtml(ci.nome) + '"></option>'; }).join('') + '</datalist>';
+        html += '<div class="table-scroll"><table><thead><tr><th>Nome atual</th><th>Receitas</th><th>Trocar por (Alô Chefia)</th></tr></thead><tbody>';
+        foraPadrao.forEach(function(nm){
+          var sug = sugerirNomePadrao(nm, catalogoAlo);
+          html += '<tr><td>' + escapeHtml(nm) + '</td><td class="num-cell">' + usoNome[nm] + '</td>' +
+            '<td><input class="grid-input wide" style="width:100%; min-width:220px;" type="text" list="itens-alo-lista" data-padron-de="' + escapeHtml(nm) + '" value="' + escapeHtml(sug) + '" placeholder="Digite para buscar"></td></tr>';
+        });
+        html += '</tbody></table></div>';
+        html += '<div style="margin-top:12px;"><button class="btn primary" id="padron-aplicar">Aplicar padronização</button></div>';
+      }
+      html += '</div>';
+    }
     html += '</div>';
 
     html += '<div style="height:16px"></div>';
@@ -4727,6 +4854,7 @@
 
     Object.keys(SUBTABS_REGISTRY).forEach(function(navId){
       var navItem = NAV.find(function(n){ return n.id===navId; });
+      if(!navItem) return; // aba escondida (ex.: Bebidas) — não aparece no editor de cargos
       var marcadoPagina = editandoCargo ? (editandoCargo.navIds||[]).indexOf(navId)!==-1 : false;
       var subSalvas = (editandoCargo && editandoCargo.subTabs && editandoCargo.subTabs[navId]) || null;
       html += '<div class="cargo-subtabs-block" data-subtabs-for="' + navId + '" style="margin-top:12px; padding:10px 12px; background:var(--paper); border-radius:8px; ' + (marcadoPagina ? '' : 'display:none;') + '">';
@@ -4916,6 +5044,88 @@
       };
     });
 
+    var addItensBtn = document.getElementById('itens-alo-add');
+    if(addItensBtn){
+      addItensBtn.onclick = async function(){
+        var linhas = document.getElementById('itens-alo-novos').value.split('\n');
+        var atual = (await getData('itens-alochefia', null)) || {fonte:'Alô Chefia', itens:[]};
+        var jaTem = {};
+        atual.itens.forEach(function(ci){ jaTem[normNome(ci.nome)] = true; });
+        var novos = 0, repetidos = 0;
+        linhas.forEach(function(l){
+          var partes = l.split(';');
+          var nome = (partes[0]||'').trim();
+          if(!nome) return;
+          if(jaTem[normNome(nome)]){ repetidos++; return; }
+          atual.itens.push({nome:nome, unidade:((partes[1]||'').trim() || 'un'), producao:false});
+          jaTem[normNome(nome)] = true;
+          novos++;
+        });
+        if(novos===0){ showToast(repetidos ? 'Esses itens já estão na lista.' : 'Cole pelo menos um item.', 'error'); return; }
+        atual.itens.sort(function(a,b){ return a.nome.localeCompare(b.nome, 'pt-BR'); });
+        atual.atualizadoEm = new Date().toISOString();
+        var saved = await setData('itens-alochefia', atual);
+        if(!saved) return;
+        logAudit('Ambas as unidades', 'Acrescentou itens à lista padrão do Alô Chefia', novos + ' item(ns)');
+        showToast(novos + ' item(ns) acrescentado(s).', 'success');
+        renderConfig(main);
+      };
+    }
+
+    var padronBtn = document.getElementById('padron-aplicar');
+    if(padronBtn){
+      padronBtn.onclick = async function(){
+        var catMapCfg = {};
+        catalogoAlo.forEach(function(ci){ catMapCfg[normNome(ci.nome)] = ci.nome; });
+        var renomes = {}, invalidos = 0, qtdTrocas = 0;
+        main.querySelectorAll('[data-padron-de]').forEach(function(inp){
+          var atualNome = inp.getAttribute('data-padron-de');
+          var digitado = inp.value.trim();
+          if(!digitado) return;
+          var oficial = catMapCfg[normNome(digitado)];
+          if(!oficial){ invalidos++; inp.style.borderColor = 'var(--ember)'; return; }
+          if(oficial !== atualNome){ renomes[atualNome] = oficial; qtdTrocas++; }
+        });
+        if(invalidos>0){ showToast(invalidos + ' linha(s) com nome que não está na lista do Alô Chefia. Corrija ou apague.', 'error'); return; }
+        if(qtdTrocas===0){ showToast('Nenhuma troca para aplicar.'); return; }
+        if(!(await showConfirm('Trocar o nome de ' + qtdTrocas + ' insumo(s) nas receitas, nos registros de produção e nos preços? Faça um backup (Configurações) antes, se ainda não fez.', 'Aplicar'))) return;
+
+        var itensConteudo = await getConteudo();
+        var trocar = function(ing){
+          var chave = (ing && ing.nome ? String(ing.nome) : '').trim();
+          if(chave && Object.prototype.hasOwnProperty.call(renomes, chave)){ ing.nome = renomes[chave]; }
+        };
+        itensConteudo.forEach(function(it){
+          (it.ingredientes||[]).forEach(trocar);
+          (it.producoes||[]).forEach(function(pr){ (pr.ingredientes||[]).forEach(trocar); });
+        });
+        var okConteudo = await setData('conteudo', itensConteudo);
+        if(!okConteudo) return;
+
+        var precosAll = await getData('insumos-precos', {});
+        Object.keys(renomes).forEach(function(antigo){
+          if(precosAll[antigo]){
+            if(!precosAll[renomes[antigo]]){ precosAll[renomes[antigo]] = precosAll[antigo]; }
+            delete precosAll[antigo];
+          }
+        });
+        await setData('insumos-precos', precosAll);
+
+        var nomesAll = await getData('insumos-nomes', []);
+        var nomesNovos = [], vistoNomes = {};
+        nomesAll.forEach(function(nm){
+          var s = String(nm||'').trim();
+          var f = Object.prototype.hasOwnProperty.call(renomes, s) ? renomes[s] : s;
+          if(f && !vistoNomes[f]){ vistoNomes[f] = true; nomesNovos.push(f); }
+        });
+        await setData('insumos-nomes', nomesNovos);
+
+        logAudit('Ambas as unidades', 'Padronizou nomes de insumos (Alô Chefia)', qtdTrocas + ' nome(s)');
+        showToast(qtdTrocas + ' nome(s) padronizado(s).', 'success');
+        renderConfig(main);
+      };
+    }
+
     document.getElementById('nav-perm-save').onclick = async function(){
       var newPerms = {};
       NAV.filter(function(n){ return n.id!=='config'; }).forEach(function(n){
@@ -4997,7 +5207,7 @@
       'motoboys-turno-status','motoboys-turno-removidos','caixa-fechamento','caixa-fechamento-status','conteudo','nav-permissions','avaliacoes',
       'colaboradores-avaliacao','insumos-cadastro','insumos-nomes','insumos-precos','checklist-status','audit-log','users-list',
       'pedidos-folga','atestados-colaborador','sugestoes-ideias','sugestoes-compras','whatsapp-contatos','cargos-personalizados','producao-diaria',
-      'producao-diaria-fixas','producao-diaria-removidos','bebidas-cadastro','bebidas-fechamentos','bebidas-fechamento-status','recebimentos-anexos','desperdicio-registros'];
+      'producao-diaria-fixas','producao-diaria-removidos','bebidas-cadastro','bebidas-fechamentos','bebidas-fechamento-status','recebimentos-anexos','desperdicio-registros','itens-alochefia'];
 
     document.getElementById('limpar-rendimentos').onclick = async function(){
       var todosItens = await getConteudo();
