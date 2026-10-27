@@ -2067,7 +2067,9 @@
     var l = DESPERDICIO_LOCAIS.find(function(x){ return x.id===id; });
     return l ? l.label : id;
   }
+  function dpLocalDoUsuario(){ return user.unit==='unidade2' ? 'boqueirao' : 'unidade1'; }
   function dpLocalAtual(){
+    if(user.role!=='dono') return dpLocalDoUsuario();
     var ids = DESPERDICIO_LOCAIS.map(function(l){ return l.id; });
     if(window.__dpLocal && ids.indexOf(window.__dpLocal)!==-1) return window.__dpLocal;
     var salvo = null;
@@ -2121,12 +2123,13 @@
     var html = pageHead('Desperdício', 'Registre o que foi desperdiçado. O lançamento no Alô Chefia é feito depois pela gerência.');
 
     // Seletor de local (mostra pendentes dos outros locais para a gerência).
-    html += '<div class="unit-toggle" style="margin-bottom:14px; width:fit-content; flex-wrap:wrap;">';
-    DESPERDICIO_LOCAIS.forEach(function(l){
+    var locaisVisiveis = DESPERDICIO_LOCAIS.filter(function(l){ return user.role==='dono' || l.id===local; });
+    if(locaisVisiveis.length>1) html += '<div class="unit-toggle" style="margin-bottom:14px; width:fit-content; flex-wrap:wrap;">';
+    if(locaisVisiveis.length>1) locaisVisiveis.forEach(function(l){
       var n = admin ? all.filter(function(r){ return dpLocalId(r)===l.id && r.status!=='lancado'; }).length : 0;
       html += '<button data-dp-local="' + l.id + '" class="' + (l.id===local?'active':'') + '">' + l.label + (n>0 ? ' (' + n + ')' : '') + '</button>';
     });
-    html += '</div>';
+    if(locaisVisiveis.length>1) html += '</div>';
 
     if(catalogo.length===0){
       html += '<div class="card" style="margin-bottom:20px;"><div class="empty">A lista de itens do Alô Chefia ainda não foi carregada. Peça ao Dono para importar em Configurações → Itens padrão (Alô Chefia).</div></div>';
@@ -2135,10 +2138,7 @@
       html += '<div style="font-weight:600; font-size:14px; margin-bottom:12px;">Registrar desperdício · ' + dpLocalLabel(local) + '</div>';
       html += '<div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;">';
       html += '<div class="form-field" style="margin:0; width:160px;"><label for="dp-data">Data</label><input type="date" id="dp-data" value="' + dataDef + '"></div>';
-      html += '<div class="form-field" style="margin:0; flex:1; min-width:220px;"><label for="dp-item">Item (nome igual ao do Alô Chefia)</label><input type="text" id="dp-item" list="dp-itens" autocomplete="off" placeholder="Digite e escolha na lista"></div>';
-      html += '<datalist id="dp-itens">';
-      catalogo.forEach(function(c){ html += '<option value="' + escapeHtml(c.nome) + '"></option>'; });
-      html += '</datalist>';
+      html += '<div class="form-field" style="margin:0; flex:1; min-width:220px; position:relative;"><label for="dp-item">Item (nome igual ao do Alô Chefia)</label><input type="text" id="dp-item" autocomplete="off" placeholder="Digite e escolha na lista"><div id="dp-sug" style="display:none; position:absolute; z-index:30; left:0; right:0; top:100%; max-height:240px; overflow:auto; background:var(--surface, #fff); border:1px solid var(--border, #ccc); border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.15);"></div></div>';
       html += '<div class="form-field" style="margin:0; width:130px;"><label for="dp-qtd">Quantidade <span id="dp-unid" style="color:var(--muted);"></span></label><input type="text" inputmode="decimal" id="dp-qtd" placeholder="0"></div>';
       html += '<div class="form-field" style="margin:0; width:210px;"><label for="dp-motivo">Motivo</label><select id="dp-motivo">';
       DESPERDICIO_MOTIVOS.forEach(function(m){ html += '<option value="' + escapeHtml(m) + '"' + (m===motivoDef?' selected':'') + '>' + escapeHtml(m) + '</option>'; });
@@ -2190,7 +2190,24 @@
         var c = catMap[normNome(itemEl.value)];
         document.getElementById('dp-unid').textContent = c ? '(' + c.unidade + ')' : '';
       };
-      itemEl.addEventListener('input', mostrarUnidade);
+      var sugEl = document.getElementById('dp-sug');
+      var esconderSug = function(){ sugEl.style.display = 'none'; };
+      var mostrarSug = function(){
+        var q = normNome(itemEl.value);
+        if(!q){ esconderSug(); return; }
+        var toks = q.split(' ').filter(Boolean);
+        var achados = catalogo.filter(function(c){ var n = normNome(c.nome); return toks.every(function(t){ return n.indexOf(t)!==-1; }); }).slice(0, 12);
+        if(achados.length===0){ sugEl.innerHTML = '<div style="padding:10px; color:var(--muted); font-size:13px;">Nenhum item encontrado.</div>'; sugEl.style.display = 'block'; return; }
+        sugEl.innerHTML = achados.map(function(c, i){ return '<div data-i="' + i + '" style="padding:10px 12px; cursor:pointer; font-size:14px; border-bottom:1px solid var(--border, #eee);">' + escapeHtml(c.nome) + ' <span style="color:var(--muted); font-size:12px;">(' + escapeHtml(c.unidade||'') + ')</span></div>'; }).join('');
+        sugEl.style.display = 'block';
+        sugEl.querySelectorAll('[data-i]').forEach(function(d){
+          d.addEventListener('mousedown', function(ev){ ev.preventDefault(); });
+          d.addEventListener('click', function(){ itemEl.value = achados[+d.getAttribute('data-i')].nome; esconderSug(); mostrarUnidade(); var q2 = document.getElementById('dp-qtd'); if(q2) q2.focus(); });
+        });
+      };
+      itemEl.addEventListener('input', function(){ mostrarUnidade(); mostrarSug(); });
+      itemEl.addEventListener('focus', mostrarSug);
+      itemEl.addEventListener('blur', function(){ setTimeout(esconderSug, 200); });
       itemEl.addEventListener('change', mostrarUnidade);
       if(window.__dpFocus){ window.__dpFocus = false; itemEl.focus(); }
     }
