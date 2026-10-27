@@ -290,8 +290,8 @@
   var driveAccessToken = null;
 
   var UNITS = [
-    {id:'unidade1', label:'Unidade 1'},
-    {id:'unidade2', label:'Unidade 2'}
+    {id:'unidade1', label:'Tatuquara'},
+    {id:'unidade2', label:'Boqueirão'}
   ];
   var ROLES = [
     {id:'dono', label:'Dono / central'},
@@ -511,6 +511,7 @@
     });
   }
 
+  function auditUnitMatch(rotulo, id){ return rotulo===labelUnit(id) || rotulo===(id==='unidade1' ? 'Unidade 1' : 'Unidade 2'); }
   function labelUnit(id){ var u = UNITS.find(function(x){return x.id===id;}); return u ? u.label : 'Todas as unidades'; }
   function labelRole(id){ return ROLES.find(function(r){return r.id===id;}).label; }
   function money(v){ return 'R$ ' + (Math.round((v||0)*100)/100).toFixed(2).replace('.',','); }
@@ -867,7 +868,11 @@
       });
     });
 
-    var html = pageHead('Visão geral', user.role==='dono' ? 'Comparativo entre as duas unidades' : 'Sua unidade, com comparativo somente leitura');
+    var ehDono = user.role==='dono';
+    var verU1 = ehDono || user.unit==='unidade1';
+    var verU2 = ehDono || user.unit==='unidade2';
+    var meuLocalDesp = (user.unit==='unidade2') ? 'boqueirao' : 'unidade1';
+    var html = pageHead('Visão geral', ehDono ? 'Comparativo entre as duas unidades' : labelUnit(user.unit));
 
     html += '<div class="card" style="margin-bottom:16px;">';
     html += '<div style="font-weight:600; font-size:14px; margin-bottom:12px;">Atalhos</div>';
@@ -878,29 +883,27 @@
         '<span style="font-size:22px; font-weight:700;" class="mono">' + valor + '</span>' +
       '</button>';
     }
-    html += atalhoTile('recebimentos-unidade1', 'Recebimentos pendentes · Unidade 1', pendRcU1);
-    html += atalhoTile('recebimentos-unidade2', 'Recebimentos pendentes · Unidade 2', pendRcU2);
-    html += atalhoTile('rendimento-unidade1', 'Rendimento · Unidade 1 (hoje / semana)', rendHojeU1 + ' / ' + rendSemanaU1);
-    html += atalhoTile('rendimento-unidade2', 'Rendimento · Unidade 2 (hoje / semana)', rendHojeU2 + ' / ' + rendSemanaU2);
-    DESPERDICIO_LOCAIS.forEach(function(l){
+    if(verU1) html += atalhoTile('recebimentos-unidade1', 'Recebimentos pendentes · ' + labelUnit('unidade1'), pendRcU1);
+    if(verU2) html += atalhoTile('recebimentos-unidade2', 'Recebimentos pendentes · ' + labelUnit('unidade2'), pendRcU2);
+    if(verU1) html += atalhoTile('rendimento-unidade1', 'Rendimento · ' + labelUnit('unidade1') + ' (hoje / semana)', rendHojeU1 + ' / ' + rendSemanaU1);
+    if(verU2) html += atalhoTile('rendimento-unidade2', 'Rendimento · ' + labelUnit('unidade2') + ' (hoje / semana)', rendHojeU2 + ' / ' + rendSemanaU2);
+    DESPERDICIO_LOCAIS.filter(function(l){ return ehDono || l.id===meuLocalDesp; }).forEach(function(l){
       html += atalhoTile('desperdicio-' + l.id, 'Desperdício pendente · ' + l.label, pendDespLocal(l.id));
     });
     html += '</div>';
     html += '</div>';
 
     html += '<div class="grid-4">';
-    html += statCard('Lançamentos · Unidade 1', t1.count, false);
-    html += statCard('Entregas · Unidade 1', t1.totalEntregas, false);
-    html += statCard('Lançamentos · Unidade 2', t2.count, false);
-    html += statCard('Entregas · Unidade 2', t2.totalEntregas, false);
+    if(verU1){ html += statCard('Lançamentos · ' + labelUnit('unidade1'), t1.count, false); html += statCard('Entregas · ' + labelUnit('unidade1'), t1.totalEntregas, false); }
+    if(verU2){ html += statCard('Lançamentos · ' + labelUnit('unidade2'), t2.count, false); html += statCard('Entregas · ' + labelUnit('unidade2'), t2.totalEntregas, false); }
     html += '</div>';
 
     html += '<div style="height:16px"></div>';
     html += '<div class="card">';
     html += '<div style="font-weight:600; font-size:14px; margin-bottom:2px;">Total pago a motoboys (acumulado)</div>';
-    html += '<div style="font-size:12px; color:var(--muted);">' + (user.role!=='dono' ? '<span class="lock-badge"><i class="ti ti-lock" aria-hidden="true"></i> Comparativo somente leitura</span>' : 'Some de todos os lançamentos registrados') + '</div>';
-    html += barRow('Unidade 1', t1.totalPago, maxPago, 'ember');
-    html += barRow('Unidade 2', t2.totalPago, maxPago, '');
+    html += '<div style="font-size:12px; color:var(--muted);">' + (!ehDono ? labelUnit(user.unit) : 'Some de todos os lançamentos registrados') + '</div>';
+    if(verU1) html += barRow(labelUnit('unidade1'), t1.totalPago, maxPago, 'ember');
+    if(verU2) html += barRow(labelUnit('unidade2'), t2.totalPago, maxPago, '');
     html += '</div>';
 
     main.innerHTML = html;
@@ -1924,7 +1927,7 @@
     if(canEdit){
       html += '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px;">';
       html += '<input class="grid-input wide" style="width:220px;" type="text" id="bb-cad-nome" placeholder="Nome da bebida">';
-      html += '<select class="grid-select" id="bb-cad-unit"><option value="unidade1">Unidade 1</option><option value="unidade2">Unidade 2</option><option value="ambas">Ambas as unidades</option></select>';
+      html += '<select class="grid-select" id="bb-cad-unit"><option value="unidade1">Tatuquara</option><option value="unidade2">Boqueirão</option><option value="ambas">Ambas as unidades</option></select>';
       html += '<button class="btn primary" id="bb-cad-add">Adicionar</button>';
       html += '</div>';
     }
@@ -4747,8 +4750,8 @@
     var log = (await getData('audit-log', [])).slice().reverse();
 
     var filtered = log.filter(function(e){
-      if(!canPickUnit && labelUnit(user.unit)!==e.unit) return false;
-      if(canPickUnit && viewUnit!=='todas' && labelUnit(viewUnit)!==e.unit) return false;
+      if(!canPickUnit && !auditUnitMatch(e.unit, user.unit)) return false;
+      if(canPickUnit && viewUnit!=='todas' && !auditUnitMatch(e.unit, viewUnit)) return false;
       if(search){
         var hay = (e.action + ' ' + e.details + ' ' + e.role + ' ' + e.unit).toLowerCase();
         if(hay.indexOf(search.toLowerCase())===-1) return false;
