@@ -163,6 +163,23 @@
   .saldo-pill.pos{background:var(--ok-bg); color:var(--ok-txt);}
   .saldo-pill.neg{background:var(--warn-bg); color:var(--warn-txt);}
 
+  .sheet-wrap{overflow:auto; max-height:70vh; margin-top:10px; border:1px solid var(--line); border-radius:8px;}
+  table.sheet{border-collapse:separate; border-spacing:0; font-size:12.5px; width:max-content; min-width:100%;}
+  table.sheet th{position:sticky; top:0; z-index:2; background:var(--paper); font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); font-weight:700; padding:8px 9px; border-right:1px solid var(--line); border-bottom:1px solid var(--line); white-space:nowrap; text-align:center;}
+  table.sheet tr:nth-child(2) th{top:33px;}
+  table.sheet th.grp{border-bottom:1px solid var(--line);} table.sheet th.sub{font-weight:600; font-size:10px;}
+  table.sheet td{padding:7px 9px; border-right:1px solid var(--line); border-bottom:1px solid var(--line); white-space:nowrap;}
+  table.sheet .sticky-col{position:sticky; left:0; z-index:3; background:var(--paper); text-align:left; min-width:130px;}
+  table.sheet td.sticky-col{background:var(--surface, #fff); z-index:1; font-weight:600;}
+  table.sheet td.c{text-align:center; min-width:34px;} table.sheet td.r{text-align:right;} table.sheet td.muted{color:var(--muted);}
+  table.sheet td.ok{background:rgba(46,160,67,.10);} table.sheet td.aberto{background:rgba(230,170,20,.22);}
+  table.sheet td.tot, table.sheet th.tot{font-weight:700; position:sticky; right:0; background:var(--paper); box-shadow:-2px 0 0 var(--line);} table.sheet th.tot{z-index:3;} table.sheet td.tot{z-index:1; background:var(--surface, #fff);} table.sheet tr.sheet-total td.tot{background:var(--paper);}
+  table.sheet tr.sheet-total td{font-weight:700; background:var(--paper); border-top:2px solid var(--line);} table.sheet tr.sheet-total td.sticky-col{background:var(--paper);}
+  table.sheet tr.sheet-status td{font-size:12px; color:var(--muted);} .st-ok{color:#2ea043; font-weight:700;} .st-ab{color:#d9a014;}
+  table.sheet tbody tr:hover td{filter:brightness(.97);}
+  .sheet-aviso{margin-top:10px; padding:9px 12px; border-radius:8px; background:rgba(230,170,20,.16); font-size:12.5px;} .sheet-aviso.ok{background:rgba(46,160,67,.12);}
+  .table-hardgrid tfoot tr.sheet-total td{font-weight:700; background:var(--paper); padding:8px; border:1px solid var(--line);}
+  .table-hardgrid td.dia-cell{text-align:right; padding:4px 8px; color:var(--muted);}
   .table-hardgrid{width:100%; border-collapse:collapse; font-size:13px; border:1px solid var(--line);}
   .table-hardgrid th{text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:700; padding:9px 8px; background:var(--paper); border:1px solid var(--line); white-space:nowrap;}
   .table-hardgrid td{padding:4px; border:1px solid var(--line); vertical-align:middle;}
@@ -346,12 +363,14 @@
     if(navId==='conteudo') return todasIds.filter(function(id){ return id!=='verificacao' && id!=='planejarproducao'; });
     return todasIds;
   }
-  var DEFAULT_RATES = {dog:8, dell:6, rtDog:4, rtDell:3, diariaAlmoco:10, diariaTarde:10, diariaNoite:0};
+  // Pagamento dos entregadores (decisão de 01/11/2026): valor fixo por turno, igual para todas as marcas.
+  var DEFAULT_RATES = {entrega:{dia:4, noite:6}, retaxa:{dia:2, noite:3}, diaria:{dia:30, noite:50}};
   var TURNOS = [
-    {id:'almoco', label:'Almoço'},
-    {id:'tarde', label:'Tarde'},
+    {id:'dia', label:'Dia (almoço e tarde)'},
     {id:'noite', label:'Noite'}
   ];
+  // Lançamentos antigos usavam 'almoco' e 'tarde'. Agora os dois contam como 'dia'.
+  function turnoNorm(t){ return t==='noite' ? 'noite' : 'dia'; }
   var WEEKDAYS = [
     {id:'dom', label:'Domingo', short:'Dom', js:0},
     {id:'seg', label:'Segunda', short:'Seg', js:1},
@@ -825,8 +844,8 @@
   async function renderDashboard(main){
     var dLoaded = await Promise.all([
       getData('motoboys-entries', []),
-      getData('rates-unidade1', DEFAULT_RATES),
-      getData('rates-unidade2', DEFAULT_RATES),
+      getRates('unidade1'),
+      getRates('unidade2'),
       getData('recebimentos-anexos', []),
       getConteudo(),
       getData('desperdicio-registros', [])
@@ -929,28 +948,32 @@
   }
 
   // ============ MOTOBOYS ============
-  function diariaForTurno(rates, turno){
-    if(turno==='almoco') return rates.diariaAlmoco||0;
-    if(turno==='tarde') return rates.diariaTarde||0;
-    if(turno==='noite') return rates.diariaNoite||0;
-    return 0;
+  // Aceita o formato novo e converte os formatos antigos guardados no banco.
+  function normRates(v){
+    var d = DEFAULT_RATES;
+    var out = {entrega:{dia:d.entrega.dia, noite:d.entrega.noite}, retaxa:{dia:d.retaxa.dia, noite:d.retaxa.noite}, diaria:{dia:d.diaria.dia, noite:d.diaria.noite}};
+    if(!v) return out;
+    var src = (v.novo && v.novo.entrega) ? {
+      entrega:{dia:v.novo.entrega.almoco, noite:v.novo.entrega.noite},
+      retaxa:{dia:(v.novo.retaxa||{}).almoco, noite:(v.novo.retaxa||{}).noite},
+      diaria:{dia:(v.novo.diaria||{}).almoco, noite:(v.novo.diaria||{}).noite}
+    } : (v.entrega ? v : null);
+    if(!src) return out;
+    ['entrega','retaxa','diaria'].forEach(function(g){
+      ['dia','noite'].forEach(function(t){
+        var x = parseFloat((src[g]||{})[t]);
+        if(!isNaN(x)) out[g][t] = x;
+      });
+    });
+    return out;
   }
-  // Valores que valem para uma data e um turno.
-  // Modelo novo (rates.novo): valor fixo por turno, igual para todas as marcas, a partir de rates.novo.desde.
-  // Antes dessa data, vale o modelo antigo (assim o histórico não muda).
-  function ratesEfetivos(rates, date, turno){
-    var n = rates.novo;
-    if(n && n.desde && date && date >= n.desde){
-      var v = (n.entrega||{})[turno] || 0;
-      var r = (n.retaxa||{})[turno] || 0;
-      return {dog:v, dell:v, rtDog:r, rtDell:r, diaria:(n.diaria||{})[turno] || 0, novo:true};
-    }
-    return {dog:rates.dog||0, dell:rates.dell||0, rtDog:rates.rtDog||0, rtDell:rates.rtDell||0, diaria:diariaForTurno(rates, turno), novo:false};
-  }
+  async function getRates(unitId){ return normRates(await getData('rates-' + unitId, null)); }
+
+  function entregasDe(e){ return (e.dog||0) + (e.dell||0); }
+  function retaxasDe(e){ return (e.rtDog||0) + (e.rtDell||0); }
   function calcTotal(e, rates){
-    var ef = ratesEfetivos(rates, e.date, e.turno);
-    var ganho = (e.dog||0)*ef.dog + (e.dell||0)*ef.dell + (e.rtDog||0)*ef.rtDog + (e.rtDell||0)*ef.rtDell;
-    return ganho + ef.diaria + (e.gorjeta||0) - (e.dinheiro||0) - (e.produtos||0);
+    var t = turnoNorm(e.turno);
+    return entregasDe(e)*rates.entrega[t] + retaxasDe(e)*rates.retaxa[t] + rates.diaria[t] + (e.gorjeta||0) - (e.dinheiro||0) - (e.produtos||0);
   }
 
   async function renderMotoboys(main){
@@ -994,12 +1017,12 @@
     var viewUnit = canPickUnit ? (window.__mbUnit || 'unidade1') : user.unit;
     window.__mbUnit = viewUnit;
     var viewDate = window.__mbDate || todayISO();
-    var viewTurno = window.__mbTurno || 'almoco';
+    var viewTurno = turnoNorm(window.__mbTurno || 'dia');
 
     var weekday = weekdayIdForDate(viewDate);
     var loaded = await Promise.all([
       getData('motoboys-entries', []),
-      getData('rates-' + viewUnit, DEFAULT_RATES),
+      getRates(viewUnit),
       getData('motoboy-schedule', []),
       getData('motoboy-cadastro', []),
       getData('motoboys-turno-status', {})
@@ -1008,27 +1031,29 @@
     var rates = loaded[1];
     var fullSchedule = loaded[2].filter(function(s){ return s.unit===viewUnit; });
     var schedule = fullSchedule.filter(function(s){
-      return s.weekday===weekday && s.turno===viewTurno;
+      return s.weekday===weekday && turnoNorm(s.turno)===viewTurno;
     });
     var cadastro = loaded[3].filter(function(m){ return m.ativo!==false; });
 
     var statusAll = loaded[4];
     var statusKey = turnoStatusKey(viewUnit, viewDate, viewTurno);
-    var turnoStatus = statusAll[statusKey] || null;
+    var statusKeysTodas = viewTurno==='dia' ? [statusKey, turnoStatusKey(viewUnit, viewDate, 'almoco'), turnoStatusKey(viewUnit, viewDate, 'tarde')] : [statusKey];
+    var turnoStatus = null;
+    statusKeysTodas.forEach(function(k){ if(!turnoStatus && statusAll[k]) turnoStatus = statusAll[k]; });
     var locked = !!(turnoStatus && turnoStatus.closed);
     var readOnly = locked && !isManagerRole;
 
     // Auto-provisiona uma linha para cada motoboy escalado neste dia da semana + turno,
     // menos quem foi explicitamente removido do lançamento de hoje (substituição)
     var removidosHoje = (await getData('motoboys-turno-removidos', []))
-      .filter(function(r){ return r.unit===viewUnit && r.date===viewDate && r.turno===viewTurno; })
+      .filter(function(r){ return r.unit===viewUnit && r.date===viewDate && turnoNorm(r.turno)===viewTurno; })
       .map(function(r){ return r.nome.trim().toLowerCase(); });
 
     var dirty = false;
     schedule.forEach(function(s){
       if(removidosHoje.indexOf(s.nome.trim().toLowerCase())!==-1) return;
       var exists = allEntries.some(function(e){
-        return e.unit===viewUnit && e.date===viewDate && e.turno===viewTurno && e.nome.trim().toLowerCase()===s.nome.trim().toLowerCase();
+        return e.unit===viewUnit && e.date===viewDate && turnoNorm(e.turno)===viewTurno && e.nome.trim().toLowerCase()===s.nome.trim().toLowerCase();
       });
       if(!exists){
         allEntries.push({id:'e'+Date.now()+Math.random().toString(16).slice(2), unit:viewUnit, date:viewDate, turno:viewTurno, nome:s.nome, origem:'fixo', dog:0, dell:0, rtDog:0, rtDell:0, produtos:0, dinheiro:0, gorjeta:0});
@@ -1037,20 +1062,19 @@
     });
     if(dirty && !locked) await setData('motoboys-entries', allEntries);
 
-    var rows = allEntries.filter(function(e){ return e.unit===viewUnit && e.date===viewDate && e.turno===viewTurno; });
+    var rows = allEntries.filter(function(e){ return e.unit===viewUnit && e.date===viewDate && turnoNorm(e.turno)===viewTurno; });
 
     function readRow(tr){
       function n(field){ return parseFloat(tr.querySelector('[data-field="'+field+'"]').value) || 0; }
       return {
         nome: tr.querySelector('[data-field="nome"]').value.trim(),
         origem: tr.querySelector('[data-field="origem"]').value,
-        dog:n('dog'), dell:n('dell'), rtDog:n('rtDog'), rtDell:n('rtDell'),
+        dog:n('dog'), dell:0, rtDog:n('rtDog'), rtDell:0,
         produtos:n('produtos'), dinheiro:n('dinheiro'), gorjeta:n('gorjeta')
       };
     }
 
-    var efAtual = ratesEfetivos(rates, viewDate, viewTurno);
-    var diariaAtual = efAtual.diaria;
+    var diariaAtual = rates.diaria[viewTurno];
     var html = pageHead('Motoboys', weekdayLabel(weekday) + ' · ' + turnoLabel(viewTurno) + ' já vem da escala semanal');
 
     if(canPickUnit){
@@ -1078,15 +1102,15 @@
     html += '<div class="card">';
     html += '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">';
     html += '<div><div style="font-weight:600; font-size:14px;">' + labelUnit(viewUnit) + ' · ' + turnoLabel(viewTurno) + '</div>';
-    html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;>' + (efAtual.novo ? 'Entrega (todas as marcas) ' + money(efAtual.dog) + ' · retaxa ' + money(efAtual.rtDog) : 'DOG ' + money(efAtual.dog) + ' · DELL ' + money(efAtual.dell) + ' · rt.DOG ' + money(efAtual.rtDog) + ' · rt.DELL ' + money(efAtual.rtDell)) + ' · diária deste turno ' + money(diariaAtual) + '</div></div>';
+    html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Entrega ' + money(rates.entrega[viewTurno]) + ' · retaxa ' + money(rates.retaxa[viewTurno]) + ' · diária ' + money(diariaAtual) + ' (todas as marcas)</div></div>';
     html += '<div class="form-field" style="margin:0;"><label for="mb-date">Data</label><input type="date" id="mb-date" value="' + viewDate + '"></div>';
     html += '</div>';
 
     html += '<div style="overflow-x:auto; margin-top:14px;"><table class="table-hardgrid"><thead><tr>' +
-      '<th>Motoboy</th><th>Origem</th><th>Dog</th><th>Dell</th><th>Rt.dog</th><th>Rt.dell</th><th>Produtos R$</th><th>Dinheiro R$</th><th>Gorjeta R$</th><th>Total a receber</th><th></th></tr></thead><tbody id="mb-tbody">';
+      '<th>Motoboy</th><th>Origem</th><th>Entregas</th><th>Retaxas</th><th>Produtos R$</th><th>Dinheiro R$</th><th>Gorjeta R$</th><th>Diária R$</th><th>Total a receber</th><th></th></tr></thead><tbody id="mb-tbody">';
 
-    rows.forEach(function(e){ html += motoboyRowHtml(e, money(calcTotal(e, rates)), readOnly); });
-    html += '</tbody></table></div>';
+    rows.forEach(function(e){ html += motoboyRowHtml(e, money(calcTotal(e, rates)), readOnly, money(rates.diaria[viewTurno])); });
+    html += '</tbody><tfoot><tr class="sheet-total"><td>Total do turno</td><td></td><td class="num-cell" id="mb-ft-ent"></td><td class="num-cell" id="mb-ft-rt"></td><td class="num-cell" id="mb-ft-prod"></td><td class="num-cell" id="mb-ft-din"></td><td class="num-cell" id="mb-ft-gor"></td><td class="num-cell" id="mb-ft-dia"></td><td class="num-cell" id="mb-ft-tot"></td><td></td></tr></tfoot></table></div>';
 
     if(rows.length===0){
       html += '<div class="empty">Ninguém escalado para ' + weekdayLabel(weekday) + ' · ' + turnoLabel(viewTurno) + '.' +
@@ -1133,7 +1157,7 @@
     if(reopenBtn){
       reopenBtn.onclick = async function(){
         var all = await getData('motoboys-turno-status', {});
-        delete all[statusKey];
+        statusKeysTodas.forEach(function(k){ delete all[k]; });
         var saved = await setData('motoboys-turno-status', all);
         if(saved){ logAudit(viewUnit, 'Reabriu lançamento de motoboys', turnoLabel(viewTurno) + ' · ' + viewDate); }
         renderMotoboysDaily(main);
@@ -1155,12 +1179,25 @@
       };
     }
 
+    function atualizarRodape(){
+      var t = {ent:0, rt:0, prod:0, din:0, gor:0, dia:0, tot:0};
+      main.querySelectorAll('#mb-tbody tr').forEach(function(tr){
+        var v = readRow(tr); v.turno = viewTurno;
+        t.ent += v.dog; t.rt += v.rtDog; t.prod += v.produtos; t.din += v.dinheiro; t.gor += v.gorjeta; t.dia += rates.diaria[viewTurno]; t.tot += calcTotal(v, rates);
+      });
+      var set = function(id, txt){ var el = document.getElementById(id); if(el) el.textContent = txt; };
+      set('mb-ft-ent', t.ent); set('mb-ft-rt', t.rt); set('mb-ft-prod', money(t.prod)); set('mb-ft-din', money(t.din)); set('mb-ft-gor', money(t.gor)); set('mb-ft-dia', money(t.dia)); set('mb-ft-tot', money(t.tot));
+    }
+    atualizarRodape();
+
     function wireRow(tr){
       tr.querySelectorAll('input,select').forEach(function(inp){
         inp.addEventListener('input', function(){
           var vals = readRow(tr);
           vals.turno = viewTurno;
           tr.querySelector('.total-cell').textContent = money(calcTotal(vals, rates));
+          tr.querySelector('.dia-cell').textContent = money(rates.diaria[viewTurno]);
+          atualizarRodape();
         });
         inp.addEventListener('change', async function(){
           var vals = readRow(tr);
@@ -1168,11 +1205,11 @@
           var all = await getData('motoboys-entries', []);
           var idx = all.findIndex(function(x){ return x.id===id; });
           if(idx===-1) return;
-          var before = {dog:all[idx].dog, dell:all[idx].dell, rtDog:all[idx].rtDog, rtDell:all[idx].rtDell, produtos:all[idx].produtos, dinheiro:all[idx].dinheiro, gorjeta:all[idx].gorjeta, nome:all[idx].nome};
+          var before = {dog:entregasDe(all[idx]), dell:0, rtDog:retaxasDe(all[idx]), rtDell:0, produtos:all[idx].produtos, dinheiro:all[idx].dinheiro, gorjeta:all[idx].gorjeta, nome:all[idx].nome};
           all[idx].nome = vals.nome || all[idx].nome;
           all[idx].origem = vals.origem;
-          all[idx].dog = vals.dog; all[idx].dell = vals.dell;
-          all[idx].rtDog = vals.rtDog; all[idx].rtDell = vals.rtDell;
+          all[idx].dog = vals.dog; all[idx].dell = 0;
+          all[idx].rtDog = vals.rtDog; all[idx].rtDell = 0;
           all[idx].produtos = vals.produtos; all[idx].dinheiro = vals.dinheiro; all[idx].gorjeta = vals.gorjeta;
           var saved = await setData('motoboys-entries', all);
           if(saved){
@@ -1326,14 +1363,18 @@
 
     var entries2 = await Promise.all([
       getData('motoboys-entries', []),
-      getData('rates-' + viewUnit, DEFAULT_RATES),
+      getRates(viewUnit),
       getData('motoboy-schedule', []),
-      getData('motoboy-cadastro', [])
+      getData('motoboy-cadastro', []),
+      getData('motoboys-turno-status', {}),
+      getData('motoboys-periodos-fechados', {})
     ]);
     var entries = entries2[0];
     var rates = entries2[1];
     var schedule = entries2[2].filter(function(s){ return s.unit===viewUnit; });
     var cadastro = entries2[3];
+    var statusTurnos = entries2[4];
+    var periodosFechados = entries2[5];
     var cadastroAtivos = cadastro.filter(function(m){ return m.ativo!==false; });
 
     function pixFor(nome){
@@ -1343,23 +1384,42 @@
 
     var periodEntries = entries.filter(function(e){ return e.unit===viewUnit && e.date>=startDate && e.date<=endDate; });
 
+    // Datas do período (no máximo 31 dias)
+    var datas = [];
+    (function(){
+      var d = new Date(startDate + 'T12:00:00'), fim = new Date(endDate + 'T12:00:00');
+      while(d <= fim && datas.length < 31){ datas.push(isoDate(d)); d.setDate(d.getDate()+1); }
+    })();
+    function turnoFechado(date, t){
+      var ks = [turnoStatusKey(viewUnit, date, t)];
+      if(t==='dia'){ ks.push(turnoStatusKey(viewUnit, date, 'almoco')); ks.push(turnoStatusKey(viewUnit, date, 'tarde')); }
+      return ks.some(function(k){ return statusTurnos[k] && statusTurnos[k].closed; });
+    }
+
+    // Uma pessoa pode ter mais de uma linha no mesmo dia e turno (lançamentos antigos). A diária conta uma vez.
     var byName = {};
+    function novaLinha(nome){ return {nome:nome, cel:{}, entregas:0, retaxas:0, produtos:0, dinheiro:0, gorjeta:0, diarias:0, turnosDia:0, turnosNoite:0, total:0}; }
     periodEntries.forEach(function(e){
       var key = e.nome.trim().toLowerCase();
-      if(!byName[key]) byName[key] = {nome:e.nome, total:0, almoco:0, tarde:0, noite:0};
-      byName[key].total += calcTotal(e, rates);
-      if(e.turno==='almoco') byName[key].almoco++;
-      else if(e.turno==='tarde') byName[key].tarde++;
-      else if(e.turno==='noite') byName[key].noite++;
+      if(!byName[key]) byName[key] = novaLinha(e.nome);
+      var r = byName[key];
+      var t = turnoNorm(e.turno);
+      var ck = e.date + '|' + t;
+      if(!r.cel[ck]){ r.cel[ck] = {ent:0}; r.diarias += rates.diaria[t]; if(t==='dia') r.turnosDia++; else r.turnosNoite++; }
+      r.cel[ck].ent += entregasDe(e);
+      r.entregas += entregasDe(e); r.retaxas += retaxasDe(e);
+      r.produtos += (e.produtos||0); r.dinheiro += (e.dinheiro||0); r.gorjeta += (e.gorjeta||0);
+      r.total += entregasDe(e)*rates.entrega[t] + retaxasDe(e)*rates.retaxa[t] + (e.gorjeta||0) - (e.dinheiro||0) - (e.produtos||0);
     });
+    Object.keys(byName).forEach(function(k){ byName[k].total += byName[k].diarias; });
     schedule.forEach(function(s){
       var key = s.nome.trim().toLowerCase();
-      if(!byName[key]) byName[key] = {nome:s.nome, total:0, almoco:0, tarde:0, noite:0};
+      if(!byName[key]) byName[key] = novaLinha(s.nome);
     });
 
     var names = Object.keys(byName).sort(function(a,b){ return byName[a].nome.localeCompare(byName[b].nome); });
 
-    var html = pageHead('Motoboys', 'Fechamento do período · diária somada automaticamente por turno trabalhado');
+    var html = pageHead('Motoboys', 'Planilha do período · confira tudo aqui antes de fechar');
 
     if(canPickUnit){
       html += '<div class="unit-toggle" style="margin-bottom:14px; width:fit-content;">';
@@ -1377,30 +1437,93 @@
     html += '<div class="form-field" style="margin:0;"><label for="mr-end">Data final</label><input type="date" id="mr-end" value="' + endDate + '"></div>';
     html += '</div></div>';
 
-    html += '<div style="overflow-x:auto; margin-top:16px;"><table><thead><tr><th>Motoboy</th><th>Pix</th><th>Dias almoço</th><th>Dias tarde</th><th>Dias noite</th><th>Total a pagar</th></tr></thead><tbody>';
-    var grandTotal = 0;
+    // ---- Planilha do período ----
+    var TT = {ent:0, rt:0, dia:0, noite:0, diarias:0, vEnt:0, vRt:0, prod:0, din:0, gor:0, tot:0};
+    var colTot = {};   // total de entregas por data e turno
+    var statusCel = {}; // 'f' fechado, 'a' aberto
+    periodEntries.forEach(function(e){
+      var ck = e.date + '|' + turnoNorm(e.turno);
+      statusCel[ck] = turnoFechado(e.date, turnoNorm(e.turno)) ? 'f' : 'a';
+    });
+    var abertos = Object.keys(statusCel).filter(function(k){ return statusCel[k]==='a'; }).length;
+    var diaSemCurto = function(iso){ var w = WEEKDAYS.find(function(x){ return x.js===new Date(iso+'T12:00:00').getDay(); }); return w ? w.short : ''; };
+    var fmtDM = function(iso){ return iso.slice(8,10) + '/' + iso.slice(5,7); };
+
+    var pKey = viewUnit + '|' + startDate + '|' + endDate;
+    var fechado = periodosFechados[pKey] || null;
+
+    var tb = '<table class="sheet" id="mr-sheet"><thead>';
+    tb += '<tr><th rowspan="2" class="sticky-col">Motoboy</th><th rowspan="2">Pix</th>';
+    datas.forEach(function(d){ tb += '<th colspan="2" class="grp">' + diaSemCurto(d) + ' ' + fmtDM(d) + '</th>'; });
+    tb += '<th rowspan="2">Turnos dia</th><th rowspan="2">Turnos noite</th><th rowspan="2">Entregas</th><th rowspan="2">Retaxas</th><th rowspan="2">Diárias R$</th><th rowspan="2">Entregas R$</th><th rowspan="2">Retaxas R$</th><th rowspan="2">Produtos R$</th><th rowspan="2">Dinheiro R$</th><th rowspan="2">Gorjeta R$</th><th rowspan="2" class="tot">Total a pagar</th></tr>';
+    tb += '<tr>';
+    datas.forEach(function(){ tb += '<th class="sub">Dia</th><th class="sub">Noite</th>'; });
+    tb += '</tr></thead><tbody>';
     names.forEach(function(key){
-      var row = byName[key];
-      grandTotal += row.total;
-      html += '<tr><td>' + escapeHtml(row.nome) + '</td>' +
-        '<td class="num-cell" style="color:var(--muted);">' + escapeHtml(pixFor(row.nome) || '—') + '</td>' +
-        '<td class="num-cell">' + row.almoco + '</td><td class="num-cell">' + row.tarde + '</td><td class="num-cell">' + row.noite + '</td>' +
-        '<td class="num-cell" style="font-weight:600;">' + money(row.total) + '</td></tr>';
+      var r = byName[key];
+      var vEnt = 0;
+      // valores por turno (entregas × valor do turno)
+      ['dia','noite'].forEach(function(t){
+        datas.forEach(function(d){ var c = r.cel[d+'|'+t]; if(c){ vEnt += c.ent * rates.entrega[t]; } });
+      });
+      // retaxas por turno
+      var rtVal = 0;
+      periodEntries.forEach(function(e){ if(e.nome.trim().toLowerCase()===key){ rtVal += retaxasDe(e) * rates.retaxa[turnoNorm(e.turno)]; } });
+      TT.ent += r.entregas; TT.rt += r.retaxas; TT.dia += r.turnosDia; TT.noite += r.turnosNoite; TT.diarias += r.diarias; TT.vEnt += vEnt; TT.vRt += rtVal; TT.prod += r.produtos; TT.din += r.dinheiro; TT.gor += r.gorjeta; TT.tot += r.total;
+      tb += '<tr><td class="sticky-col nm">' + escapeHtml(r.nome) + '</td><td class="muted">' + escapeHtml(pixFor(r.nome) || '—') + '</td>';
+      datas.forEach(function(d){
+        ['dia','noite'].forEach(function(t){
+          var c = r.cel[d+'|'+t];
+          if(c){ colTot[d+'|'+t] = (colTot[d+'|'+t]||0) + c.ent; }
+          tb += '<td class="c' + (c ? (statusCel[d+'|'+t]==='a' ? ' aberto' : ' ok') : '') + '">' + (c ? c.ent : '') + '</td>';
+        });
+      });
+      tb += '<td class="c">' + r.turnosDia + '</td><td class="c">' + r.turnosNoite + '</td><td class="c">' + r.entregas + '</td><td class="c">' + r.retaxas + '</td>' +
+        '<td class="r">' + money(r.diarias) + '</td><td class="r">' + money(vEnt) + '</td><td class="r">' + money(rtVal) + '</td><td class="r">' + money(r.produtos) + '</td><td class="r">' + money(r.dinheiro) + '</td><td class="r">' + money(r.gorjeta) + '</td><td class="r tot">' + money(r.total) + '</td></tr>';
     });
     if(names.length===0){
-      html += '<tr><td colspan="6" class="empty">Nenhum motoboy na escala ou lançamento neste período.</td></tr>';
+      tb += '<tr><td colspan="' + (2 + datas.length*2 + 11) + '" class="empty">Nenhum motoboy na escala ou lançamento neste período.</td></tr>';
     } else {
-      html += '<tr><td style="font-weight:700;">Total do período</td><td></td><td></td><td></td><td></td><td class="num-cell" style="font-weight:700;">' + money(grandTotal) + '</td></tr>';
+      tb += '<tr class="sheet-total"><td class="sticky-col">Total do período</td><td></td>';
+      datas.forEach(function(d){ ['dia','noite'].forEach(function(t){ tb += '<td class="c">' + (colTot[d+'|'+t]||'') + '</td>'; }); });
+      tb += '<td class="c">' + TT.dia + '</td><td class="c">' + TT.noite + '</td><td class="c">' + TT.ent + '</td><td class="c">' + TT.rt + '</td><td class="r">' + money(TT.diarias) + '</td><td class="r">' + money(TT.vEnt) + '</td><td class="r">' + money(TT.vRt) + '</td><td class="r">' + money(TT.prod) + '</td><td class="r">' + money(TT.din) + '</td><td class="r">' + money(TT.gor) + '</td><td class="r tot">' + money(TT.tot) + '</td></tr>';
+      tb += '<tr class="sheet-status"><td class="sticky-col">Lançamento</td><td></td>';
+      datas.forEach(function(d){ ['dia','noite'].forEach(function(t){ var st = statusCel[d+'|'+t]; tb += '<td class="c">' + (st==='f' ? '<span class="st-ok" title="Finalizado">✓</span>' : (st==='a' ? '<span class="st-ab" title="Ainda aberto">●</span>' : '')) + '</td>'; }); });
+      tb += '<td colspan="11"></td></tr>';
     }
-    html += '</tbody></table></div>';
+    tb += '</tbody></table>';
+
+    html += '<div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:14px;">';
+    html += '<span style="font-size:12px; color:var(--muted);">Valores: entrega ' + money(rates.entrega.dia) + ' dia · ' + money(rates.entrega.noite) + ' noite — retaxa ' + money(rates.retaxa.dia) + ' / ' + money(rates.retaxa.noite) + ' — diária ' + money(rates.diaria.dia) + ' / ' + money(rates.diaria.noite) + '</span>';
+    html += '<span style="flex:1;"></span><button class="btn" id="mr-copiar"><i class="ti ti-copy" aria-hidden="true"></i> Copiar para planilha</button>';
+    html += '</div>';
+    if(abertos>0){
+      html += '<div class="sheet-aviso">● ' + abertos + ' turno(s) com lançamento ainda aberto (células em amarelo). Finalize em "Conferir lançamento diário" antes de fechar.</div>';
+    } else if(periodEntries.length>0){
+      html += '<div class="sheet-aviso ok">✓ Todos os turnos com lançamento deste período estão finalizados.</div>';
+    }
+    html += '<div class="sheet-wrap">' + tb + '</div>';
+
+    // ---- Fechar o período ----
+    html += '<div style="margin-top:14px; padding:14px; border:1px solid var(--line); border-radius:10px; background:var(--paper); display:flex; gap:12px; align-items:center; flex-wrap:wrap;">';
+    if(fechado){
+      var mudou = Math.abs((fechado.total||0) - TT.tot) > 0.005;
+      html += '<div style="flex:1; min-width:240px;"><div style="font-weight:600; font-size:13.5px;"><i class="ti ti-lock" aria-hidden="true"></i> Período fechado por ' + escapeHtml(fechado.closedBy||'—') + ' em ' + fmtDateTime(fechado.closedAt) + ' · total ' + money(fechado.total||0) + '</div>';
+      if(mudou){ html += '<div style="font-size:12.5px; color:var(--warn-txt); margin-top:4px;">Atenção: os valores mudaram depois do fechamento. Total de agora: ' + money(TT.tot) + '.</div>'; }
+      html += '</div><button class="btn" id="mr-reabrir">Reabrir período</button>';
+    } else {
+      html += '<div style="flex:1; min-width:240px; font-size:12.5px; color:var(--muted);">Quando a planilha estiver certa, feche o período. O site guarda o total e avisa se algum valor mudar depois.</div>';
+      html += '<button class="btn primary" id="mr-fechar"' + (names.length===0 ? ' disabled' : '') + '><i class="ti ti-lock" aria-hidden="true"></i> Fechar período</button>';
+    }
+    html += '</div>';
     html += '</div>';
 
     html += '<div style="height:16px"></div>';
     html += '<div class="card">';
     html += '<div style="font-weight:600; font-size:14px;">Escala semanal — ' + labelUnit(viewUnit) + '</div>';
-    html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Escolha o turno e o dia, depois diga quem trabalha. Isso já preenche sozinho o lançamento do caixa. Diária: almoço ' + money(ratesEfetivos(rates, todayISO(), 'almoco').diaria) + ' · tarde ' + money(ratesEfetivos(rates, todayISO(), 'tarde').diaria) + ' · noite ' + money(ratesEfetivos(rates, todayISO(), 'noite').diaria) + ' (ajuste em Configurações).</div>';
+    html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Escolha o turno e o dia, depois diga quem trabalha. Isso já preenche sozinho o lançamento do caixa. Diária: dia ' + money(rates.diaria.dia) + ' · noite ' + money(rates.diaria.noite) + ' (ajuste em Configurações).</div>';
 
-    var escTurno = window.__mrEscTurno || 'almoco';
+    var escTurno = turnoNorm(window.__mrEscTurno || 'dia');
     var escDia = window.__mrEscDia || 'seg';
 
     html += '<div style="margin-top:16px; font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.03em;">1. Turno</div>';
@@ -1417,7 +1540,7 @@
     });
     html += '</div>';
 
-    var escNames = schedule.filter(function(s){ return s.weekday===escDia && s.turno===escTurno; });
+    var escNames = schedule.filter(function(s){ return s.weekday===escDia && turnoNorm(s.turno)===escTurno; });
     var escNomesSet = {};
     escNames.forEach(function(s){ escNomesSet[s.nome.trim().toLowerCase()] = s.id; });
 
@@ -1443,7 +1566,7 @@
     html += '<div style="margin-top:8px;">';
     WEEKDAY_DISPLAY_ORDER.forEach(function(wid){
       var parts = TURNOS.map(function(t){
-        var ns = schedule.filter(function(s){ return s.weekday===wid && s.turno===t.id; }).map(function(s){ return s.nome; });
+        var ns = schedule.filter(function(s){ return s.weekday===wid && turnoNorm(s.turno)===t.id; }).map(function(s){ return s.nome; }).filter(function(n,i,arr){ return arr.indexOf(n)===i; });
         return t.label + ': ' + (ns.length ? ns.join(', ') : '—');
       });
       html += '<div style="font-size:12.5px; padding:7px 0; border-bottom:1px solid var(--line);"><b>' + weekdayLabel(wid) + '</b> — ' + parts.join(' · ') + '</div>';
@@ -1461,6 +1584,40 @@
     document.getElementById('mr-start').onchange = function(ev){ window.__mrStart = ev.target.value || startDate; renderMotoboysReport(main); };
     document.getElementById('mr-end').onchange = function(ev){ window.__mrEnd = ev.target.value || endDate; renderMotoboysReport(main); };
 
+    var btnCopiar = document.getElementById('mr-copiar');
+    if(btnCopiar){
+      btnCopiar.onclick = async function(){
+        var linhas = [];
+        document.querySelectorAll('#mr-sheet tr').forEach(function(tr){
+          var cels = []; tr.querySelectorAll('th,td').forEach(function(c){ cels.push(c.textContent.trim().replace(/\s+/g,' ')); }); linhas.push(cels.join('\t'));
+        });
+        try{ await navigator.clipboard.writeText(linhas.join('\n')); showToast('Planilha copiada. Cole no Google Sheets.'); }
+        catch(e){ showToast('Não foi possível copiar neste navegador.', 'error'); }
+      };
+    }
+    var btnFechar = document.getElementById('mr-fechar');
+    if(btnFechar){
+      btnFechar.onclick = async function(){
+        var msg = 'Fechar o período ' + fmtDateBR(startDate) + ' a ' + fmtDateBR(endDate) + ' de ' + labelUnit(viewUnit) + '? Total a pagar: ' + money(TT.tot) + '.' + (abertos>0 ? ' Ainda há ' + abertos + ' turno(s) aberto(s).' : '');
+        if(!(await showConfirm(msg, 'Fechar período'))) return;
+        var all = await getData('motoboys-periodos-fechados', {});
+        all[pKey] = {closedBy: (user.nome || labelRole(user.role)), closedAt: new Date().toISOString(), total: TT.tot};
+        var saved = await setData('motoboys-periodos-fechados', all);
+        if(saved){ logAudit(viewUnit, 'Fechou período de motoboys', startDate + ' a ' + endDate + ' · ' + money(TT.tot)); }
+        renderMotoboysReport(main);
+      };
+    }
+    var btnReabrir = document.getElementById('mr-reabrir');
+    if(btnReabrir){
+      btnReabrir.onclick = async function(){
+        var all = await getData('motoboys-periodos-fechados', {});
+        delete all[pKey];
+        var saved = await setData('motoboys-periodos-fechados', all);
+        if(saved){ logAudit(viewUnit, 'Reabriu período de motoboys', startDate + ' a ' + endDate); }
+        renderMotoboysReport(main);
+      };
+    }
+
     main.querySelectorAll('[data-esc-turno]').forEach(function(b){
       b.onclick = function(){ window.__mrEscTurno = b.getAttribute('data-esc-turno'); renderMotoboysReport(main); };
     });
@@ -1474,7 +1631,7 @@
         var all = await getData('motoboy-schedule', []);
         if(chk.checked){
           var dup = all.some(function(s){
-            return s.unit===viewUnit && s.weekday===escDia && s.turno===escTurno && s.nome.trim().toLowerCase()===nome.trim().toLowerCase();
+            return s.unit===viewUnit && s.weekday===escDia && turnoNorm(s.turno)===escTurno && s.nome.trim().toLowerCase()===nome.trim().toLowerCase();
           });
           if(!dup){
             all.push({id:'s'+Date.now()+Math.random().toString(16).slice(2), unit:viewUnit, weekday:escDia, turno:escTurno, nome:nome});
@@ -1482,11 +1639,11 @@
             if(saved1){ logAudit(viewUnit, 'Adicionou à escala', nome + ' · ' + weekdayLabel(escDia) + ' · ' + turnoLabel(escTurno)); }
           }
         } else {
-          var idx = all.findIndex(function(s){
-            return s.unit===viewUnit && s.weekday===escDia && s.turno===escTurno && s.nome.trim().toLowerCase()===nome.trim().toLowerCase();
+          var antes = all.length;
+          all = all.filter(function(s){
+            return !(s.unit===viewUnit && s.weekday===escDia && turnoNorm(s.turno)===escTurno && s.nome.trim().toLowerCase()===nome.trim().toLowerCase());
           });
-          if(idx>-1){
-            all.splice(idx,1);
+          if(all.length < antes){
             var saved2 = await setData('motoboy-schedule', all);
             if(saved2){ logAudit(viewUnit, 'Removeu da escala', nome + ' · ' + weekdayLabel(escDia) + ' · ' + turnoLabel(escTurno)); }
           }
@@ -1496,7 +1653,7 @@
     });
   }
 
-  function motoboyRowHtml(e, totalDisplay, readOnly){
+  function motoboyRowHtml(e, totalDisplay, readOnly, diariaDisplay){
     var dis = readOnly ? ' disabled' : '';
     return '<tr data-id="' + e.id + '">' +
       '<td><input class="grid-input wide" type="text" data-field="nome" value="' + escapeHtml(e.nome) + '"' + dis + '></td>' +
@@ -1504,13 +1661,12 @@
         '<option value="fixo"' + (e.origem!=='geral'?' selected':'') + '>Fixo da unidade</option>' +
         '<option value="geral"' + (e.origem==='geral'?' selected':'') + '>Grupo geral</option>' +
       '</select></td>' +
-      '<td><input class="grid-input" type="number" min="0" step="1" data-field="dog" value="' + (e.dog||0) + '"' + dis + '></td>' +
-      '<td><input class="grid-input" type="number" min="0" step="1" data-field="dell" value="' + (e.dell||0) + '"' + dis + '></td>' +
-      '<td><input class="grid-input" type="number" min="0" step="1" data-field="rtDog" value="' + (e.rtDog||0) + '"' + dis + '></td>' +
-      '<td><input class="grid-input" type="number" min="0" step="1" data-field="rtDell" value="' + (e.rtDell||0) + '"' + dis + '></td>' +
+      '<td><input class="grid-input" type="number" min="0" step="1" data-field="dog" value="' + entregasDe(e) + '"' + dis + '></td>' +
+      '<td><input class="grid-input" type="number" min="0" step="1" data-field="rtDog" value="' + retaxasDe(e) + '"' + dis + '></td>' +
       '<td><input class="grid-input money" type="number" min="0" step="0.01" data-field="produtos" value="' + (e.produtos||0) + '"' + dis + '></td>' +
       '<td><input class="grid-input money" type="number" min="0" step="0.01" data-field="dinheiro" value="' + (e.dinheiro||0) + '"' + dis + '></td>' +
       '<td><input class="grid-input money" type="number" min="0" step="0.01" data-field="gorjeta" value="' + (e.gorjeta||0) + '"' + dis + '></td>' +
+      '<td class="dia-cell num-cell">' + (diariaDisplay||'—') + '</td>' +
       '<td class="total-cell">' + (totalDisplay||'—') + '</td>' +
       '<td>' + (readOnly ? '' : '<button type="button" class="btn" data-remove-mb-row="' + e.id + '" style="padding:6px 9px; font-size:11.5px;" title="Remover — ele não veio hoje">×</button>') + '</td>' +
     '</tr>';
@@ -1520,7 +1676,7 @@
 
   // ============ FECHAMENTO DE CAIXA ============
   var CAIXA_TURNOS = [
-    {id:'dia', label:'Dia', motoboyTurnos:['almoco','tarde']},
+    {id:'dia', label:'Dia', motoboyTurnos:['dia','almoco','tarde']},
     {id:'noite', label:'Noite', motoboyTurnos:['noite']}
   ];
   function caixaLabel(id){ var t = CAIXA_TURNOS.find(function(x){ return x.id===id; }); return t ? t.label : id; }
@@ -4839,7 +4995,7 @@
     var html = pageHead('Configurações', 'Valor por entrega e diária por turno, configurável por unidade');
     html += '<div class="grid-2">';
 
-    var ratesByUnit = await Promise.all(UNITS.map(function(u){ return getData('rates-' + u.id, DEFAULT_RATES); }));
+    var ratesByUnit = await Promise.all(UNITS.map(function(u){ return getRates(u.id); }));
     var cfgLoaded = await Promise.all([getData('motoboy-cadastro', []), getData('colaboradores-avaliacao', []), getData('insumos-precos', {}), getConteudo(), getData('whatsapp-contatos', [])]);
     var motoboyCadastro = cfgLoaded[0].filter(function(m){ return m.ativo!==false; });
     var colabAvaliacao = cfgLoaded[1].filter(function(c){ return c.ativo!==false; });
@@ -4870,33 +5026,16 @@
       var rates = ratesByUnit[i];
       html += '<div class="card">';
       html += '<div style="font-weight:600; font-size:14px; margin-bottom:10px;">' + u.label + '</div>';
-      html += '<div class="form-grid" style="grid-template-columns:1fr 1fr;">';
-      html += formField('number', 'rate-dog-'+u.id, 'Valor entrega DOG', null, rates.dog);
-      html += formField('number', 'rate-dell-'+u.id, 'Valor entrega DELL', null, rates.dell);
-      html += formField('number', 'rate-rtdog-'+u.id, 'Valor reentrega DOG', null, rates.rtDog);
-      html += formField('number', 'rate-rtdell-'+u.id, 'Valor reentrega DELL', null, rates.rtDell);
-      html += '</div>';
-      html += '<div style="font-size:11.5px; color:var(--muted); font-weight:600; margin-top:16px;">Diária por turno</div>';
-      html += '<div class="form-grid" style="grid-template-columns:1fr 1fr 1fr; margin-top:6px;">';
-      html += formField('number', 'rate-diaria-almoco-'+u.id, 'Almoço', null, rates.diariaAlmoco);
-      html += formField('number', 'rate-diaria-tarde-'+u.id, 'Tarde', null, rates.diariaTarde);
-      html += formField('number', 'rate-diaria-noite-'+u.id, 'Noite', null, rates.diariaNoite);
-      html += '</div>';
-      // Modelo novo: valor fixo por turno, igual para todas as marcas
-      var nv = rates.novo || null;
-      var sug = !nv && u.id==='unidade1';
-      var vN = function(grupo, turno, padrao){ return nv ? ((nv[grupo]||{})[turno]) : (sug ? padrao : ''); };
-      html += '<div style="margin-top:18px; padding-top:14px; border-top:1px solid var(--border, #ddd);">';
-      html += '<div style="font-size:13px; font-weight:600;">Modelo novo · valor fixo por turno (todas as marcas)</div>';
-      html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Vale a partir da data abaixo. Antes dela, o site continua usando os valores acima. Deixe a data vazia para não usar este modelo.' + (sug ? ' <b>Valores sugeridos pela decisão de 01/11/2026. Confira e salve.</b>' : '') + '</div>';
-      html += '<div class="form-grid" style="grid-template-columns:1fr; margin-top:8px;">' + formField('date', 'novo-desde-'+u.id, 'Vale a partir de', null, nv ? nv.desde : (sug ? '2026-11-02' : '')) + '</div>';
-      html += '<div style="font-size:11.5px; color:var(--muted); font-weight:600; margin-top:10px;">Valor por entrega (Almoço · Tarde · Noite)</div>';
-      html += '<div class="form-grid" style="grid-template-columns:1fr 1fr 1fr; margin-top:6px;">' + formField('number', 'novo-ent-almoco-'+u.id, 'Almoço', null, vN('entrega','almoco',4)) + formField('number', 'novo-ent-tarde-'+u.id, 'Tarde', null, vN('entrega','tarde',4)) + formField('number', 'novo-ent-noite-'+u.id, 'Noite', null, vN('entrega','noite',6)) + '</div>';
-      html += '<div style="font-size:11.5px; color:var(--muted); font-weight:600; margin-top:10px;">Retaxa (reentrega) — ainda a definir; sugestão: metade da entrega</div>';
-      html += '<div class="form-grid" style="grid-template-columns:1fr 1fr 1fr; margin-top:6px;">' + formField('number', 'novo-rt-almoco-'+u.id, 'Almoço', null, vN('retaxa','almoco',2)) + formField('number', 'novo-rt-tarde-'+u.id, 'Tarde', null, vN('retaxa','tarde',2)) + formField('number', 'novo-rt-noite-'+u.id, 'Noite', null, vN('retaxa','noite',3)) + '</div>';
-      html += '<div style="font-size:11.5px; color:var(--muted); font-weight:600; margin-top:10px;">Diária (Almoço · Tarde · Noite)</div>';
-      html += '<div class="form-grid" style="grid-template-columns:1fr 1fr 1fr; margin-top:6px;">' + formField('number', 'novo-dia-almoco-'+u.id, 'Almoço', null, vN('diaria','almoco',30)) + formField('number', 'novo-dia-tarde-'+u.id, 'Tarde', null, vN('diaria','tarde',30)) + formField('number', 'novo-dia-noite-'+u.id, 'Noite', null, vN('diaria','noite',50)) + '</div>';
-      html += '</div>';
+      html += '<div style="font-size:11.5px; color:var(--muted); margin-bottom:8px;">Valor fixo por turno, igual para todas as marcas (Bulldog\'s, Dell\'iris e Constantin\'s). Dia = almoço e tarde.</div>';
+      html += '<div class="sheet-wrap" style="max-height:none;"><table class="sheet" style="width:100%;"><thead><tr><th class="sticky-col" style="position:static;"></th><th>Dia</th><th>Noite</th></tr></thead><tbody>';
+      [['entrega','Valor por entrega'],['retaxa','Retaxa (reentrega)'],['diaria','Diária']].forEach(function(g){
+        html += '<tr><td class="nm" style="font-weight:600;">' + g[1] + ' (R$)</td>';
+        ['dia','noite'].forEach(function(t){
+          html += '<td><input type="number" min="0" step="0.01" class="grid-input" style="text-align:right; width:100%; box-sizing:border-box;" id="rate-' + g[0] + '-' + t + '-' + u.id + '" value="' + rates[g[0]][t] + '"></td>';
+        });
+        html += '</tr>';
+      });
+      html += '</tbody></table></div>';
       html += '<div style="margin-top:12px;"><button class="btn primary" data-unit="' + u.id + '">Salvar ' + u.label + '</button></div>';
       html += '</div>';
     }
@@ -5403,7 +5542,7 @@
       };
     });
 
-    var BACKUP_KEYS = ['motoboys-entries','rates-unidade1','rates-unidade2','motoboy-schedule','motoboy-cadastro',
+    var BACKUP_KEYS = ['motoboys-periodos-fechados','motoboys-entries','rates-unidade1','rates-unidade2','motoboy-schedule','motoboy-cadastro',
       'motoboys-turno-status','motoboys-turno-removidos','caixa-fechamento','caixa-fechamento-status','conteudo','nav-permissions','avaliacoes',
       'colaboradores-avaliacao','insumos-cadastro','insumos-nomes','insumos-precos','checklist-status','audit-log','users-list',
       'pedidos-folga','atestados-colaborador','sugestoes-ideias','sugestoes-compras','whatsapp-contatos','cargos-personalizados','producao-diaria',
@@ -5513,27 +5652,13 @@
     main.querySelectorAll('button[data-unit]').forEach(function(btn){
       btn.onclick = async function(){
         var uid = btn.getAttribute('data-unit');
-        var newRates = {
-          dog: parseFloat(document.getElementById('rate-dog-'+uid).value)||0,
-          dell: parseFloat(document.getElementById('rate-dell-'+uid).value)||0,
-          rtDog: parseFloat(document.getElementById('rate-rtdog-'+uid).value)||0,
-          rtDell: parseFloat(document.getElementById('rate-rtdell-'+uid).value)||0,
-          diariaAlmoco: parseFloat(document.getElementById('rate-diaria-almoco-'+uid).value)||0,
-          diariaTarde: parseFloat(document.getElementById('rate-diaria-tarde-'+uid).value)||0,
-          diariaNoite: parseFloat(document.getElementById('rate-diaria-noite-'+uid).value)||0
-        };
-        var desdeEl = document.getElementById('novo-desde-'+uid);
         var num = function(id){ return parseFloat((document.getElementById(id)||{}).value)||0; };
-        if(desdeEl && desdeEl.value){
-          newRates.novo = {
-            desde: desdeEl.value,
-            entrega: {almoco:num('novo-ent-almoco-'+uid), tarde:num('novo-ent-tarde-'+uid), noite:num('novo-ent-noite-'+uid)},
-            retaxa: {almoco:num('novo-rt-almoco-'+uid), tarde:num('novo-rt-tarde-'+uid), noite:num('novo-rt-noite-'+uid)},
-            diaria: {almoco:num('novo-dia-almoco-'+uid), tarde:num('novo-dia-tarde-'+uid), noite:num('novo-dia-noite-'+uid)}
-          };
-        }
+        var newRates = {entrega:{}, retaxa:{}, diaria:{}};
+        ['entrega','retaxa','diaria'].forEach(function(g){
+          ['dia','noite'].forEach(function(t){ newRates[g][t] = num('rate-' + g + '-' + t + '-' + uid); });
+        });
         var saved = await setData('rates-' + uid, newRates);
-        if(saved){ logAudit(uid, 'Alterou valores de entrega/diária', (newRates.novo ? 'Modelo novo desde ' + newRates.novo.desde + ' · entrega ' + money(newRates.novo.entrega.almoco) + '/' + money(newRates.novo.entrega.tarde) + '/' + money(newRates.novo.entrega.noite) + ' · ' : '') + 'DOG ' + money(newRates.dog) + ' · DELL ' + money(newRates.dell) + ' · diárias ' + money(newRates.diariaAlmoco) + '/' + money(newRates.diariaTarde) + '/' + money(newRates.diariaNoite)); }
+        if(saved){ logAudit(uid, 'Alterou valores de entrega/diária', 'Entrega ' + money(newRates.entrega.dia) + '/' + money(newRates.entrega.noite) + ' · retaxa ' + money(newRates.retaxa.dia) + '/' + money(newRates.retaxa.noite) + ' · diária ' + money(newRates.diaria.dia) + '/' + money(newRates.diaria.noite) + ' (dia/noite)'); }
         btn.textContent = 'Salvo ✓';
         setTimeout(function(){ renderConfig(main); }, 700);
       };
