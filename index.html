@@ -971,9 +971,14 @@
 
   function entregasDe(e){ return (e.dog||0) + (e.dell||0); }
   function retaxasDe(e){ return (e.rtDog||0) + (e.rtDell||0); }
+  // Diária do lançamento: vale a do turno, a não ser que o Dono/Gerente tenha alterado para esta pessoa neste dia.
+  function diariaDe(e, rates){
+    var d = (e.diaria===undefined || e.diaria===null || e.diaria==='') ? NaN : parseFloat(e.diaria);
+    return isNaN(d) ? rates.diaria[turnoNorm(e.turno)] : d;
+  }
   function calcTotal(e, rates){
     var t = turnoNorm(e.turno);
-    return entregasDe(e)*rates.entrega[t] + retaxasDe(e)*rates.retaxa[t] + rates.diaria[t] + (e.gorjeta||0) - (e.dinheiro||0) - (e.produtos||0);
+    return entregasDe(e)*rates.entrega[t] + retaxasDe(e)*rates.retaxa[t] + diariaDe(e, rates) + (e.gorjeta||0) - (e.dinheiro||0) - (e.produtos||0);
   }
 
   async function renderMotoboys(main){
@@ -1070,7 +1075,8 @@
         nome: tr.querySelector('[data-field="nome"]').value.trim(),
         origem: tr.querySelector('[data-field="origem"]').value,
         dog:n('dog'), dell:0, rtDog:n('rtDog'), rtDell:0,
-        produtos:n('produtos'), dinheiro:n('dinheiro'), gorjeta:n('gorjeta')
+        produtos:n('produtos'), dinheiro:n('dinheiro'), gorjeta:n('gorjeta'),
+        diaria: (tr.querySelector('[data-field="diaria"]') ? n('diaria') : (tr.querySelector('.dia-cell') ? parseFloat(tr.querySelector('.dia-cell').getAttribute('data-dia-val')) : undefined))
       };
     }
 
@@ -1109,7 +1115,7 @@
     html += '<div style="overflow-x:auto; margin-top:14px;"><table class="table-hardgrid"><thead><tr>' +
       '<th>Motoboy</th><th>Origem</th><th>Entregas</th><th>Retaxas</th><th>Produtos R$</th><th>Dinheiro R$</th><th>Gorjeta R$</th><th>Diária R$</th><th>Total a receber</th><th></th></tr></thead><tbody id="mb-tbody">';
 
-    rows.forEach(function(e){ html += motoboyRowHtml(e, money(calcTotal(e, rates)), readOnly, money(rates.diaria[viewTurno])); });
+    rows.forEach(function(e){ html += motoboyRowHtml(e, money(calcTotal(e, rates)), readOnly, diariaDe(e, rates), rates.diaria[viewTurno], isManagerRole && !readOnly); });
     html += '</tbody><tfoot><tr class="sheet-total"><td>Total do turno</td><td></td><td class="num-cell" id="mb-ft-ent"></td><td class="num-cell" id="mb-ft-rt"></td><td class="num-cell" id="mb-ft-prod"></td><td class="num-cell" id="mb-ft-din"></td><td class="num-cell" id="mb-ft-gor"></td><td class="num-cell" id="mb-ft-dia"></td><td class="num-cell" id="mb-ft-tot"></td><td></td></tr></tfoot></table></div>';
 
     if(rows.length===0){
@@ -1183,7 +1189,7 @@
       var t = {ent:0, rt:0, prod:0, din:0, gor:0, dia:0, tot:0};
       main.querySelectorAll('#mb-tbody tr').forEach(function(tr){
         var v = readRow(tr); v.turno = viewTurno;
-        t.ent += v.dog; t.rt += v.rtDog; t.prod += v.produtos; t.din += v.dinheiro; t.gor += v.gorjeta; t.dia += rates.diaria[viewTurno]; t.tot += calcTotal(v, rates);
+        t.ent += v.dog; t.rt += v.rtDog; t.prod += v.produtos; t.din += v.dinheiro; t.gor += v.gorjeta; t.dia += diariaDe(v, rates); t.tot += calcTotal(v, rates);
       });
       var set = function(id, txt){ var el = document.getElementById(id); if(el) el.textContent = txt; };
       set('mb-ft-ent', t.ent); set('mb-ft-rt', t.rt); set('mb-ft-prod', money(t.prod)); set('mb-ft-din', money(t.din)); set('mb-ft-gor', money(t.gor)); set('mb-ft-dia', money(t.dia)); set('mb-ft-tot', money(t.tot));
@@ -1196,7 +1202,8 @@
           var vals = readRow(tr);
           vals.turno = viewTurno;
           tr.querySelector('.total-cell').textContent = money(calcTotal(vals, rates));
-          tr.querySelector('.dia-cell').textContent = money(rates.diaria[viewTurno]);
+          var diaIn = tr.querySelector('[data-field="diaria"]');
+          if(diaIn){ diaIn.style.background = (Math.abs(vals.diaria - rates.diaria[viewTurno]) > 0.004) ? 'rgba(230,170,20,.22)' : ''; }
           atualizarRodape();
         });
         inp.addEventListener('change', async function(){
@@ -1211,12 +1218,17 @@
           all[idx].dog = vals.dog; all[idx].dell = 0;
           all[idx].rtDog = vals.rtDog; all[idx].rtDell = 0;
           all[idx].produtos = vals.produtos; all[idx].dinheiro = vals.dinheiro; all[idx].gorjeta = vals.gorjeta;
+          var diariaAntes = diariaDe(all[idx], rates);
+          if(isManagerRole && tr.querySelector('[data-field="diaria"]')){
+            if(Math.abs(vals.diaria - rates.diaria[viewTurno]) < 0.005){ delete all[idx].diaria; } else { all[idx].diaria = vals.diaria; }
+          }
           var saved = await setData('motoboys-entries', all);
           if(saved){
             var changed = [];
             ['dog','dell','rtDog','rtDell','produtos','dinheiro','gorjeta'].forEach(function(f){
               if(before[f]!==vals[f]) changed.push(f + ': ' + before[f] + ' → ' + vals[f]);
             });
+            if(isManagerRole && tr.querySelector('[data-field="diaria"]') && Math.abs(diariaAntes - vals.diaria) > 0.004){ changed.push('diária: ' + money(diariaAntes) + ' → ' + money(vals.diaria)); }
             if(changed.length){
               logAudit(viewUnit, 'Editou lançamento de motoboy', vals.nome + ' · ' + turnoLabel(viewTurno) + ' · ' + viewDate + ' · ' + changed.join(', '));
             }
@@ -1405,7 +1417,8 @@
       var r = byName[key];
       var t = turnoNorm(e.turno);
       var ck = e.date + '|' + t;
-      if(!r.cel[ck]){ r.cel[ck] = {ent:0}; r.diarias += rates.diaria[t]; if(t==='dia') r.turnosDia++; else r.turnosNoite++; }
+      if(!r.cel[ck]){ r.cel[ck] = {ent:0, dia:diariaDe(e, rates)}; r.diarias += r.cel[ck].dia; if(t==='dia') r.turnosDia++; else r.turnosNoite++; }
+      else if(e.diaria!==undefined && e.diaria!==null && e.diaria!==''){ r.diarias += diariaDe(e, rates) - r.cel[ck].dia; r.cel[ck].dia = diariaDe(e, rates); }
       r.cel[ck].ent += entregasDe(e);
       r.entregas += entregasDe(e); r.retaxas += retaxasDe(e);
       r.produtos += (e.produtos||0); r.dinheiro += (e.dinheiro||0); r.gorjeta += (e.gorjeta||0);
@@ -1653,7 +1666,7 @@
     });
   }
 
-  function motoboyRowHtml(e, totalDisplay, readOnly, diariaDisplay){
+  function motoboyRowHtml(e, totalDisplay, readOnly, diariaVal, diariaPadrao, podeEditarDiaria){
     var dis = readOnly ? ' disabled' : '';
     return '<tr data-id="' + e.id + '">' +
       '<td><input class="grid-input wide" type="text" data-field="nome" value="' + escapeHtml(e.nome) + '"' + dis + '></td>' +
@@ -1666,7 +1679,9 @@
       '<td><input class="grid-input money" type="number" min="0" step="0.01" data-field="produtos" value="' + (e.produtos||0) + '"' + dis + '></td>' +
       '<td><input class="grid-input money" type="number" min="0" step="0.01" data-field="dinheiro" value="' + (e.dinheiro||0) + '"' + dis + '></td>' +
       '<td><input class="grid-input money" type="number" min="0" step="0.01" data-field="gorjeta" value="' + (e.gorjeta||0) + '"' + dis + '></td>' +
-      '<td class="dia-cell num-cell">' + (diariaDisplay||'—') + '</td>' +
+      (podeEditarDiaria
+        ? '<td><input class="grid-input money" type="number" min="0" step="0.01" data-field="diaria" data-padrao="' + diariaPadrao + '" value="' + diariaVal + '" title="Diária padrão do turno: ' + money(diariaPadrao) + '. Altere só em casos especiais."' + (Math.abs(diariaVal - diariaPadrao) > 0.004 ? ' style="background:rgba(230,170,20,.22);"' : '') + '></td>'
+        : '<td class="dia-cell num-cell" data-dia-val="' + diariaVal + '">' + money(diariaVal) + '</td>') +
       '<td class="total-cell">' + (totalDisplay||'—') + '</td>' +
       '<td>' + (readOnly ? '' : '<button type="button" class="btn" data-remove-mb-row="' + e.id + '" style="padding:6px 9px; font-size:11.5px;" title="Remover — ele não veio hoje">×</button>') + '</td>' +
     '</tr>';
