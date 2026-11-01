@@ -935,10 +935,22 @@
     if(turno==='noite') return rates.diariaNoite||0;
     return 0;
   }
+  // Valores que valem para uma data e um turno.
+  // Modelo novo (rates.novo): valor fixo por turno, igual para todas as marcas, a partir de rates.novo.desde.
+  // Antes dessa data, vale o modelo antigo (assim o histórico não muda).
+  function ratesEfetivos(rates, date, turno){
+    var n = rates.novo;
+    if(n && n.desde && date && date >= n.desde){
+      var v = (n.entrega||{})[turno] || 0;
+      var r = (n.retaxa||{})[turno] || 0;
+      return {dog:v, dell:v, rtDog:r, rtDell:r, diaria:(n.diaria||{})[turno] || 0, novo:true};
+    }
+    return {dog:rates.dog||0, dell:rates.dell||0, rtDog:rates.rtDog||0, rtDell:rates.rtDell||0, diaria:diariaForTurno(rates, turno), novo:false};
+  }
   function calcTotal(e, rates){
-    var ganho = (e.dog||0)*rates.dog + (e.dell||0)*rates.dell + (e.rtDog||0)*rates.rtDog + (e.rtDell||0)*rates.rtDell;
-    var diaria = diariaForTurno(rates, e.turno);
-    return ganho + diaria + (e.gorjeta||0) - (e.dinheiro||0) - (e.produtos||0);
+    var ef = ratesEfetivos(rates, e.date, e.turno);
+    var ganho = (e.dog||0)*ef.dog + (e.dell||0)*ef.dell + (e.rtDog||0)*ef.rtDog + (e.rtDell||0)*ef.rtDell;
+    return ganho + ef.diaria + (e.gorjeta||0) - (e.dinheiro||0) - (e.produtos||0);
   }
 
   async function renderMotoboys(main){
@@ -1037,7 +1049,8 @@
       };
     }
 
-    var diariaAtual = diariaForTurno(rates, viewTurno);
+    var efAtual = ratesEfetivos(rates, viewDate, viewTurno);
+    var diariaAtual = efAtual.diaria;
     var html = pageHead('Motoboys', weekdayLabel(weekday) + ' · ' + turnoLabel(viewTurno) + ' já vem da escala semanal');
 
     if(canPickUnit){
@@ -1065,7 +1078,7 @@
     html += '<div class="card">';
     html += '<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">';
     html += '<div><div style="font-weight:600; font-size:14px;">' + labelUnit(viewUnit) + ' · ' + turnoLabel(viewTurno) + '</div>';
-    html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">DOG ' + money(rates.dog) + ' · DELL ' + money(rates.dell) + ' · rt.DOG ' + money(rates.rtDog) + ' · rt.DELL ' + money(rates.rtDell) + ' · diária deste turno ' + money(diariaAtual) + '</div></div>';
+    html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;>' + (efAtual.novo ? 'Entrega (todas as marcas) ' + money(efAtual.dog) + ' · retaxa ' + money(efAtual.rtDog) : 'DOG ' + money(efAtual.dog) + ' · DELL ' + money(efAtual.dell) + ' · rt.DOG ' + money(efAtual.rtDog) + ' · rt.DELL ' + money(efAtual.rtDell)) + ' · diária deste turno ' + money(diariaAtual) + '</div></div>';
     html += '<div class="form-field" style="margin:0;"><label for="mb-date">Data</label><input type="date" id="mb-date" value="' + viewDate + '"></div>';
     html += '</div>';
 
@@ -1385,7 +1398,7 @@
     html += '<div style="height:16px"></div>';
     html += '<div class="card">';
     html += '<div style="font-weight:600; font-size:14px;">Escala semanal — ' + labelUnit(viewUnit) + '</div>';
-    html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Escolha o turno e o dia, depois diga quem trabalha. Isso já preenche sozinho o lançamento do caixa. Diária: almoço ' + money(rates.diariaAlmoco) + ' · tarde ' + money(rates.diariaTarde) + ' · noite ' + money(rates.diariaNoite) + ' (ajuste em Configurações).</div>';
+    html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Escolha o turno e o dia, depois diga quem trabalha. Isso já preenche sozinho o lançamento do caixa. Diária: almoço ' + money(ratesEfetivos(rates, todayISO(), 'almoco').diaria) + ' · tarde ' + money(ratesEfetivos(rates, todayISO(), 'tarde').diaria) + ' · noite ' + money(ratesEfetivos(rates, todayISO(), 'noite').diaria) + ' (ajuste em Configurações).</div>';
 
     var escTurno = window.__mrEscTurno || 'almoco';
     var escDia = window.__mrEscDia || 'seg';
@@ -4869,6 +4882,21 @@
       html += formField('number', 'rate-diaria-tarde-'+u.id, 'Tarde', null, rates.diariaTarde);
       html += formField('number', 'rate-diaria-noite-'+u.id, 'Noite', null, rates.diariaNoite);
       html += '</div>';
+      // Modelo novo: valor fixo por turno, igual para todas as marcas
+      var nv = rates.novo || null;
+      var sug = !nv && u.id==='unidade1';
+      var vN = function(grupo, turno, padrao){ return nv ? ((nv[grupo]||{})[turno]) : (sug ? padrao : ''); };
+      html += '<div style="margin-top:18px; padding-top:14px; border-top:1px solid var(--border, #ddd);">';
+      html += '<div style="font-size:13px; font-weight:600;">Modelo novo · valor fixo por turno (todas as marcas)</div>';
+      html += '<div style="font-size:11.5px; color:var(--muted); margin-top:2px;">Vale a partir da data abaixo. Antes dela, o site continua usando os valores acima. Deixe a data vazia para não usar este modelo.' + (sug ? ' <b>Valores sugeridos pela decisão de 01/11/2026. Confira e salve.</b>' : '') + '</div>';
+      html += '<div class="form-grid" style="grid-template-columns:1fr; margin-top:8px;">' + formField('date', 'novo-desde-'+u.id, 'Vale a partir de', null, nv ? nv.desde : (sug ? '2026-11-02' : '')) + '</div>';
+      html += '<div style="font-size:11.5px; color:var(--muted); font-weight:600; margin-top:10px;">Valor por entrega (Almoço · Tarde · Noite)</div>';
+      html += '<div class="form-grid" style="grid-template-columns:1fr 1fr 1fr; margin-top:6px;">' + formField('number', 'novo-ent-almoco-'+u.id, 'Almoço', null, vN('entrega','almoco',4)) + formField('number', 'novo-ent-tarde-'+u.id, 'Tarde', null, vN('entrega','tarde',4)) + formField('number', 'novo-ent-noite-'+u.id, 'Noite', null, vN('entrega','noite',6)) + '</div>';
+      html += '<div style="font-size:11.5px; color:var(--muted); font-weight:600; margin-top:10px;">Retaxa (reentrega) — ainda a definir; sugestão: metade da entrega</div>';
+      html += '<div class="form-grid" style="grid-template-columns:1fr 1fr 1fr; margin-top:6px;">' + formField('number', 'novo-rt-almoco-'+u.id, 'Almoço', null, vN('retaxa','almoco',2)) + formField('number', 'novo-rt-tarde-'+u.id, 'Tarde', null, vN('retaxa','tarde',2)) + formField('number', 'novo-rt-noite-'+u.id, 'Noite', null, vN('retaxa','noite',3)) + '</div>';
+      html += '<div style="font-size:11.5px; color:var(--muted); font-weight:600; margin-top:10px;">Diária (Almoço · Tarde · Noite)</div>';
+      html += '<div class="form-grid" style="grid-template-columns:1fr 1fr 1fr; margin-top:6px;">' + formField('number', 'novo-dia-almoco-'+u.id, 'Almoço', null, vN('diaria','almoco',30)) + formField('number', 'novo-dia-tarde-'+u.id, 'Tarde', null, vN('diaria','tarde',30)) + formField('number', 'novo-dia-noite-'+u.id, 'Noite', null, vN('diaria','noite',50)) + '</div>';
+      html += '</div>';
       html += '<div style="margin-top:12px;"><button class="btn primary" data-unit="' + u.id + '">Salvar ' + u.label + '</button></div>';
       html += '</div>';
     }
@@ -5494,8 +5522,18 @@
           diariaTarde: parseFloat(document.getElementById('rate-diaria-tarde-'+uid).value)||0,
           diariaNoite: parseFloat(document.getElementById('rate-diaria-noite-'+uid).value)||0
         };
+        var desdeEl = document.getElementById('novo-desde-'+uid);
+        var num = function(id){ return parseFloat((document.getElementById(id)||{}).value)||0; };
+        if(desdeEl && desdeEl.value){
+          newRates.novo = {
+            desde: desdeEl.value,
+            entrega: {almoco:num('novo-ent-almoco-'+uid), tarde:num('novo-ent-tarde-'+uid), noite:num('novo-ent-noite-'+uid)},
+            retaxa: {almoco:num('novo-rt-almoco-'+uid), tarde:num('novo-rt-tarde-'+uid), noite:num('novo-rt-noite-'+uid)},
+            diaria: {almoco:num('novo-dia-almoco-'+uid), tarde:num('novo-dia-tarde-'+uid), noite:num('novo-dia-noite-'+uid)}
+          };
+        }
         var saved = await setData('rates-' + uid, newRates);
-        if(saved){ logAudit(uid, 'Alterou valores de entrega/diária', 'DOG ' + money(newRates.dog) + ' · DELL ' + money(newRates.dell) + ' · diárias ' + money(newRates.diariaAlmoco) + '/' + money(newRates.diariaTarde) + '/' + money(newRates.diariaNoite)); }
+        if(saved){ logAudit(uid, 'Alterou valores de entrega/diária', (newRates.novo ? 'Modelo novo desde ' + newRates.novo.desde + ' · entrega ' + money(newRates.novo.entrega.almoco) + '/' + money(newRates.novo.entrega.tarde) + '/' + money(newRates.novo.entrega.noite) + ' · ' : '') + 'DOG ' + money(newRates.dog) + ' · DELL ' + money(newRates.dell) + ' · diárias ' + money(newRates.diariaAlmoco) + '/' + money(newRates.diariaTarde) + '/' + money(newRates.diariaNoite)); }
         btn.textContent = 'Salvo ✓';
         setTimeout(function(){ renderConfig(main); }, 700);
       };
