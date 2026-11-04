@@ -424,6 +424,21 @@
 
   // ---------- storage helpers ----------
   var __cache = {};
+  // Lê direto do banco (ignora a cópia da sessão). Se a leitura falhar, dá erro:
+  // quem chama não grava por cima de dados que não conseguiu ler.
+  async function getDataFresh(key, fallback){
+    var lastErr = null;
+    for(var attempt=0; attempt<3; attempt++){
+      try{
+        var res = await sb.from('kv_store').select('value').eq('key', key).maybeSingle();
+        if(res.error) throw res.error;
+        var val = (res.data && res.data.value !== undefined) ? res.data.value : fallback;
+        __cache[key] = val;
+        return JSON.parse(JSON.stringify(val));
+      }catch(e){ lastErr = e; console.error('fresh read error', key, e); await sleep(500*(attempt+1)); }
+    }
+    throw lastErr || new Error('read failed');
+  }
   async function getData(key, fallback){
     if(Object.prototype.hasOwnProperty.call(__cache, key)){
       return JSON.parse(JSON.stringify(__cache[key]));
@@ -2953,6 +2968,7 @@
   var MARCAS = ["BullDog's", "Constantins", "Dell'Iris"];
 
   function openDataUrlInNewTab(dataUrl){
+    if(/^https?:\/\//i.test(dataUrl)){ window.open(dataUrl, '_blank'); return; }
     try{
       var parts = dataUrl.split(',');
       var mimeMatch = parts[0].match(/data:(.*?);base64/);
@@ -3020,6 +3036,9 @@
 
   async function getConteudo(){
     var existing = await getData('conteudo', null);
+    if(existing !== null) return existing;
+    // Pode ser falha de leitura (internet fraca). Confirma antes de criar uma lista vazia por cima.
+    existing = await getDataFresh('conteudo', null);
     if(existing !== null) return existing;
     var oldRecipes = await getData('recipes', []);
     var oldProcesses = await getData('processes', []);
@@ -3246,13 +3265,14 @@
           if(!file) return;
           try{
             if(file.type==='application/pdf'){
-              if(file.size > 4*1024*1024){ showToast('PDF muito grande (máximo 4MB).', 'error'); return; }
-              pendingPdf = await new Promise(function(resolve, reject){
-                var reader = new FileReader();
-                reader.onload = function(e){ resolve(e.target.result); };
-                reader.onerror = function(){ reject(new Error('erro')); };
-                reader.readAsDataURL(file);
-              });
+              if(file.size > 10*1024*1024){ showToast('PDF muito grande (máximo 10MB).', 'error'); return; }
+              // O PDF vai para o armazenamento de arquivos, não para dentro da lista de receitas.
+              // Assim a lista continua leve e salvar fica rápido.
+              showToast('Enviando PDF…');
+              var caminhoPdf = 'conteudo/pdf' + Date.now() + '.pdf';
+              var upPdf = await sb.storage.from(STORAGE_BUCKET_RECEBIMENTOS).upload(caminhoPdf, file, { contentType: 'application/pdf', upsert: true });
+              if(upPdf.error) throw upPdf.error;
+              pendingPdf = sb.storage.from(STORAGE_BUCKET_RECEBIMENTOS).getPublicUrl(caminhoPdf).data.publicUrl;
               pendingImage = '';
               document.getElementById('item-image-preview').innerHTML = '<span style="font-size:12.5px; color:var(--muted);">PDF selecionado: ' + escapeHtml(file.name) + '</span>';
             } else {
@@ -4347,26 +4367,39 @@
       itemSelect.dispatchEvent(new Event('change'));
     }
 
+    var rendSalvando = false;
     document.getElementById('rend-save').onclick = async function(){
+      if(rendSalvando) return;
       var itemId = document.getElementById('rend-item').value;
       if(!itemId){ showToast('Selecione o item que você fez.', 'error'); return; }
       var total = document.getElementById('rend-total').value.trim();
       if(!total){ showToast('Informe o rendimento total obtido.', 'error'); return; }
       var data = document.getElementById('rend-data').value || todayISO();
       var ingredientes = readFichaIngredRows(rowsContainer);
-      var all = await getConteudo();
-      var idx = all.findIndex(function(x){ return x.id===itemId; });
-      if(idx===-1) return;
-      all[idx].producoes = all[idx].producoes || [];
-      all[idx].producoes.push({id:'p'+Date.now(), data:data, unit:viewUnit, ingredientes:ingredientes, rendimentoTotal:total, responsavel:user.nome || labelRole(user.role)});
-      var saved = await setData('conteudo', all);
-      if(saved){
+      var btn = document.getElementById('rend-save');
+      rendSalvando = true; btn.disabled = true; btn.textContent = 'Salvando… aguarde';
+      var voltarBtn = function(){ rendSalvando = false; btn.disabled = false; btn.textContent = 'Salvar rendimento'; };
+      try{
+        // Lê a versão mais nova antes de gravar, para não apagar o que outra pessoa salvou.
+        var all = await getDataFresh('conteudo', null);
+        if(all === null){ showToast('Não consegui ler os dados. Tente de novo.', 'error'); voltarBtn(); return; }
+        var idx = all.findIndex(function(x){ return x.id===itemId; });
+        if(idx===-1){ showToast('Esse item não existe mais. Recarregue a página.', 'error'); voltarBtn(); return; }
+        all[idx].producoes = all[idx].producoes || [];
+        all[idx].producoes.push({id:'p'+Date.now(), data:data, unit:viewUnit, ingredientes:ingredientes, rendimentoTotal:total, responsavel:user.nome || labelRole(user.role)});
+        var saved = await setData('conteudo', all);
+        if(!saved){ voltarBtn(); return; }   // o aviso de erro já apareceu; os campos continuam preenchidos
         logAudit(all[idx].marca==='todas' ? 'Ambas as unidades' : all[idx].marca, 'Registrou rendimento', all[idx].titulo + ' · ' + total);
         var listaIngMsg = ingredientes.map(function(ing){ return (ing.quantidade||'') + (ing.unidade||'') + ' de ' + ing.nome; }).join(', ');
         window.__rendLastMsg = 'Produção registrada: ' + all[idx].titulo + '\nData: ' + data + '\nRendimento obtido: ' + total + '\nInsumos utilizados: ' + (listaIngMsg||'—') + '\nRegistrado por: ' + (user.nome || labelRole(user.role));
         limparRascunho(itemId);
+        showToast('Rendimento salvo ✓');
+        renderRendimentoTab(main);
+      }catch(e){
+        console.error('rend-save', e);
+        showToast('Não foi possível salvar. Verifique a internet e tente de novo.', 'error');
+        voltarBtn();
       }
-      renderRendimentoTab(main);
     };
   }
 
